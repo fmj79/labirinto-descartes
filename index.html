@@ -67,85 +67,133 @@ const MAP=MRAW.map(r=>[...r].map(ch=>
 const POS_C=[3,6],POS_M=[13,17],POS_A=[20,12];
 const DR1=[[7,13],[7,14],[7,15]],DR2=[[16,13],[16,14],[16,15]];
 
-// ── AUDIO (Web Audio API) ──────────────────────────────────────────
-let AC=null;
+// ── AUDIO (Web Audio API — FM + reverb, estilo SNES/Mega Drive) ──────────
+let AC=null,revIn=null;
+
 function initAudio(){
   if(AC)return;
   try{
     AC=new(window.AudioContext||window.webkitAudioContext)();
     if(AC.state==='suspended')AC.resume();
-    setTimeout(startAmbient,800);
+    setupReverb();
+    setTimeout(startAmbient,900);
   }catch(e){AC=null;}
 }
-function beep(freq,type,delay,dur,vol){
-  if(!AC)return;
-  const o=AC.createOscillator(),g=AC.createGain();
-  o.connect(g);g.connect(AC.destination);
-  o.type=type||'square';o.frequency.value=freq;
-  const t=AC.currentTime+delay;
-  g.gain.setValueAtTime(vol||0.18,t);
-  g.gain.exponentialRampToValueAtTime(0.001,t+dur);
-  o.start(t);o.stop(t+dur+.02);
+
+// Reverb por rede de filtros-pente (3 delays em paralelo)
+function setupReverb(){
+  if(!AC||revIn)return;
+  const wet=AC.createGain();wet.gain.value=.28;wet.connect(AC.destination);
+  revIn=AC.createGain();revIn.gain.value=1;
+  [.067,.089,.113].forEach((d,i)=>{
+    const dl=AC.createDelay(.5),fb=AC.createGain();
+    dl.delayTime.value=d;fb.gain.value=.22-.02*i;
+    revIn.connect(dl);dl.connect(fb);fb.connect(dl);dl.connect(wet);
+  });
 }
+
+// Sintese FM: portadora + modulador → timbre rico (YM2612-like)
+function fm(cFreq,mRatio,idx,delay,dur,vol,noRev){
+  if(!AC)return;
+  const t=AC.currentTime+delay;
+  const c=AC.createOscillator(),m=AC.createOscillator();
+  const mG=AC.createGain(),env=AC.createGain();
+  c.type=m.type='sine';
+  c.frequency.value=cFreq;m.frequency.value=cFreq*mRatio;mG.gain.value=cFreq*idx;
+  m.connect(mG);mG.connect(c.frequency);c.connect(env);
+  env.connect(AC.destination);
+  if(!noRev&&revIn)env.connect(revIn);
+  env.gain.setValueAtTime(0,t);
+  env.gain.linearRampToValueAtTime(vol,t+.015);
+  env.gain.exponentialRampToValueAtTime(vol*.7,t+.08);
+  env.gain.setValueAtTime(vol*.7,t+Math.max(dur-.12,t+.09));
+  env.gain.linearRampToValueAtTime(.0001,t+dur);
+  m.start(t);c.start(t);m.stop(t+dur+.02);c.stop(t+dur+.02);
+}
+
+// Nota quente (triângulo + vibrato suave) — estilo SPC700 do SNES
+function warm(freq,delay,dur,vol){
+  if(!AC)return;
+  const t=AC.currentTime+delay;
+  const o=AC.createOscillator(),lfo=AC.createOscillator();
+  const lG=AC.createGain(),env=AC.createGain();
+  o.type='triangle';lfo.frequency.value=5.5;lG.gain.value=freq*.008;
+  lfo.connect(lG);lG.connect(o.frequency);o.frequency.value=freq;
+  o.connect(env);env.connect(AC.destination);if(revIn)env.connect(revIn);
+  env.gain.setValueAtTime(0,t);
+  env.gain.linearRampToValueAtTime(vol,t+.04);
+  env.gain.setValueAtTime(vol*.75,t+.2);
+  env.gain.setValueAtTime(vol*.75,t+Math.max(dur-.15,t+.21));
+  env.gain.linearRampToValueAtTime(.0001,t+dur);
+  lfo.start(t);o.start(t);lfo.stop(t+dur);o.stop(t+dur);
+}
+
+// Passo: FM kick curto (pitch sweep)
 function playStep(){
   if(!AC)return;
-  // Ruido branco curto — passos
-  const buf=AC.createBuffer(1,~~(AC.sampleRate*.035),AC.sampleRate);
-  const d=buf.getChannelData(0);
-  for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*.35;
-  const src=AC.createBufferSource(),g=AC.createGain();
-  src.buffer=buf;src.connect(g);g.connect(AC.destination);
-  g.gain.setValueAtTime(.1,AC.currentTime);
-  g.gain.exponentialRampToValueAtTime(.001,AC.currentTime+.035);
-  src.start();
+  const t=AC.currentTime;
+  const o=AC.createOscillator(),env=AC.createGain();
+  o.type='sine';
+  o.frequency.setValueAtTime(130,t);
+  o.frequency.exponentialRampToValueAtTime(40,t+.06);
+  o.connect(env);env.connect(AC.destination);
+  env.gain.setValueAtTime(.16,t);
+  env.gain.exponentialRampToValueAtTime(.001,t+.09);
+  o.start(t);o.stop(t+.1);
 }
+
+// Acerto: arpejo FM de sino ascendente
 function playSuccess(){
-  // Arpejo ascendente maior
-  [[330,.0],[392,.12],[523,.24],[659,.38]].forEach(([f,t])=>beep(f,'square',t,.2,.22));
+  [[330,.0],[415,.13],[523,.26],[659,.4]].forEach(([f,d])=>fm(f,14,1,d,.38,.15));
 }
+
+// Erro: descida FM dissonante
 function playWrong(){
-  // Descida cromatica dissonante
-  [[330,.0],[277,.1],[220,.2],[185,.32]].forEach(([f,t])=>beep(f,'square',t,.28,.28));
+  fm(220,1.5,8,0,.4,.2);fm(196,1.8,10,.15,.42,.18);fm(165,2.2,12,.32,.5,.2);
 }
+
+// Risada maligna: tremolo FM com queda de pitch + série de pulsos
 function playEvilLaugh(){
-  // Risada do Genio: tremolo + queda de pitch
   if(!AC)return;
+  // Pulsos descendentes
+  for(let i=0;i<5;i++)fm(300-i*35,2,6,i*.22,.22,.22-i*.02,true);
+  // Glide final
+  const t=AC.currentTime+1.2;
   const o=AC.createOscillator(),lfo=AC.createOscillator();
-  const lG=AC.createGain(),g=AC.createGain();
-  lfo.frequency.value=9;lG.gain.value=90;
+  const lG=AC.createGain(),env=AC.createGain();
+  lfo.frequency.value=11;lG.gain.value=110;
   lfo.connect(lG);lG.connect(o.frequency);
-  o.connect(g);g.connect(AC.destination);
-  o.type='square';o.frequency.value=280;
-  o.frequency.linearRampToValueAtTime(80,AC.currentTime+2.2);
-  g.gain.setValueAtTime(.26,AC.currentTime);
-  g.gain.setValueAtTime(.26,AC.currentTime+1.8);
-  g.gain.exponentialRampToValueAtTime(.001,AC.currentTime+2.4);
-  lfo.start();o.start();
-  lfo.stop(AC.currentTime+2.4);o.stop(AC.currentTime+2.4);
+  o.connect(env);env.connect(AC.destination);
+  o.type='square';o.frequency.value=180;
+  o.frequency.linearRampToValueAtTime(55,t+1.4);
+  env.gain.setValueAtTime(.22,t);env.gain.linearRampToValueAtTime(.001,t+1.6);
+  lfo.start(t);o.start(t);lfo.stop(t+1.7);o.stop(t+1.7);
 }
+
+// Fanfarra da epifania: acordes FM ascendentes + sustain warm
 function playFanfare(){
-  // Fanfarra para a epifania
-  [[262,.0],[330,.1],[392,.2],[523,.3],[392,.4],[523,.52],[784,.64]]
-    .forEach(([f,t])=>beep(f,'square',t,.14,.28));
-  [[262,.7],[330,.7],[523,.7]].forEach(([f,t])=>beep(f,'triangle',t,2.5,.07));
+  [[262,330,392,.0],[330,415,523,.22],[392,494,659,.44],[523,659,784,.66]]
+    .forEach(([a,b,c2,d])=>{
+      fm(a,1,2,d,.55,.11);fm(b,1,2,d,.55,.10);fm(c2,1,2,d,.55,.09);
+    });
+  [[523,.9],[659,.9],[784,.9]].forEach(([f,d])=>warm(f,d,2.8,.07));
 }
+
+// Ambiente: loop SNES/dungeon (baixo FM + vozes internas + melodia triângulo)
 function startAmbient(){
   if(!AC)return;
-  // Drone baixo (A1=55Hz) a cada ~5s
-  function bass(){
-    beep(55,'sine',0,3,.07);
-    beep(73,'sine',.5,2.5,.04);
-    setTimeout(bass,5000+Math.random()*2000);
+  function loop(){
+    if(!AC)return;
+    // Baixo FM descendente: A-G-F-E (lúgubre)
+    [[110,.0],[98,2.0],[87,4.0],[82,6.0]].forEach(([f,d])=>fm(f,.5,3,d,1.9,.07));
+    // Vozes internas (pad FM)
+    [[220,1.4],[247,3.5],[208,5.6]].forEach(([f,d])=>fm(f,1,1.5,d,1.7,.04));
+    // Melodia: triângulo aquecido em mi-menor pentatônico
+    warm(659,.9,1.1,.038);warm(587,2.4,.8,.033);
+    warm(523,4.0,1.5,.040);warm(440,6.2,1.0,.032);warm(392,7.4,.9,.030);
+    setTimeout(loop,8100);
   }
-  // Ping alto esparso (pentatonica menor)
-  const hi=[440,392,349,330,294];let hi_i=0;
-  function ping(){
-    if(S.scene==='playing'||S.scene==='dialogue'){
-      beep(hi[hi_i%hi.length]*2,'triangle',0,.9,.035);hi_i++;
-    }
-    setTimeout(ping,2200+Math.random()*2800);
-  }
-  setTimeout(bass,500);setTimeout(ping,2500);
+  setTimeout(loop,1300);
 }
 
 // ── TEXTO DE INTRODUCAO ────────────────────────────────────────────
@@ -540,13 +588,27 @@ function drawTile(sx,sy,tp,c,r){
       if((c*3+r*7)%9===0)ctx.fillRect(sx+11,sy+11,1,1);
       if((c+r*11)%15===0)ctx.fillRect(sx+8,sy+7,1,1);
       break;
-    case WALL:
-      ctx.fillStyle='#241930';ctx.fillRect(sx,sy,T,T);
-      ctx.fillStyle='#342448';ctx.fillRect(sx,sy,T,2);
-      ctx.fillStyle='#110c1a';ctx.fillRect(sx,sy+T-1,T,1);
-      ctx.fillStyle='#1a1024';ctx.fillRect(sx,sy+8,T,1);
-      if((c+r)%4===0)ctx.fillRect(sx+1,sy+1,1,1);
+    case WALL:{
+      // Argamassa (fundo)
+      ctx.fillStyle='#0e0818';ctx.fillRect(sx,sy,T,T);
+      // Blocos de pedra em tijolamento alternado
+      // Linha par: bloco esq (0-6) + dir (8-15) | Linha ímpar: parciais+centro
+      const ev=r%2===0;
+      const st=[ev?[0,0,7,7]:[0,0,4,7],ev?[8,0,8,7]:[5,0,7,7],
+               !ev?[13,0,3,7]:null,
+               ev?[0,8,4,7]:[0,8,7,7],ev?[5,8,7,7]:[8,8,8,7],
+               ev?[13,8,3,7]:null];
+      st.forEach(b=>{
+        if(!b)return;
+        const [bx,by,bw,bh]=b;
+        const vi=((c+~~(bx/5))^(r+~~(by/6)))%3;
+        ctx.fillStyle=['#281c36','#241832','#261a34'][vi];
+        ctx.fillRect(sx+bx,sy+by,bw,bh);
+        ctx.fillStyle='#362646';ctx.fillRect(sx+bx,sy+by,bw,1);  // topo
+        ctx.fillStyle='#18102c';ctx.fillRect(sx+bx+bw-1,sy+by+1,1,bh-1); // sombra dir
+      });
       break;
+    }
     case DOOR:
       ctx.fillStyle='#361e0a';ctx.fillRect(sx,sy,T,T);
       ctx.fillStyle='#4c2c10';ctx.fillRect(sx+1,sy+1,T-2,T-2);
@@ -557,41 +619,97 @@ function drawTile(sx,sy,tp,c,r){
       ctx.fillStyle='#8a7040';ctx.fillRect(sx+7,sy+7,2,2);
       break;
     case T_C:{
+      // Piso
       ctx.fillStyle='#1c1510';ctx.fillRect(sx,sy,T,T);
-      ctx.fillStyle='#2a1808';ctx.fillRect(sx+1,sy+9,T-2,7);
-      ctx.fillStyle='#381e0a';ctx.fillRect(sx+2,sy+8,T-4,2);
-      ctx.fillStyle='#1e1006';
-      ctx.fillRect(sx+2,sy+12,2,4);ctx.fillRect(sx+T-4,sy+12,2,4);
-      ctx.fillStyle='#a89858';ctx.fillRect(sx+6,sy+4,4,5);ctx.fillRect(sx+5,sy+8,6,1);
-      const fl=Math.sin(n*.28);
-      ctx.fillStyle=fl>.2?'#ffe860':'#ffb818';ctx.fillRect(sx+7,sy+(fl>.2?0:1),2,2);
-      ctx.fillStyle='#ff7600';ctx.fillRect(sx+7,sy+2+(fl>.2?1:0),2,1);
-      ctx.fillStyle='#fff0a0';ctx.fillRect(sx+7,sy+3,2,1);
+      // Pernas da mesa
+      ctx.fillStyle='#20100a';ctx.fillRect(sx+1,sy+8,2,8);ctx.fillRect(sx+13,sy+8,2,8);
+      // Tampo da mesa com destaque
+      ctx.fillStyle='#3a2010';ctx.fillRect(sx,sy+7,T,2);
+      ctx.fillStyle='#4e2c16';ctx.fillRect(sx,sy+7,T,1);
+      // Pergaminho/carta sobre a mesa
+      ctx.fillStyle='#c8b870';ctx.fillRect(sx+1,sy+4,5,3);
+      ctx.fillStyle='#b0a060';ctx.fillRect(sx+1,sy+4,5,1);
+      ctx.fillStyle='#7a6838';ctx.fillRect(sx+2,sy+5,3,1);ctx.fillRect(sx+2,sy+6,4,1);
+      // Castiçal (saucer + coluna)
+      ctx.fillStyle='#b0a058';ctx.fillRect(sx+7,sy+5,4,2);
+      ctx.fillStyle='#c8b868';ctx.fillRect(sx+7,sy+5,4,1);
+      ctx.fillStyle='#c8b060';ctx.fillRect(sx+8,sy+2,2,4);
+      ctx.fillStyle='#e0c870';ctx.fillRect(sx+8,sy+2,1,4); // brilho
+      // Vela (corpo de cera)
+      ctx.fillStyle='#eee8b8';ctx.fillRect(sx+7,sy,5,3);
+      ctx.fillStyle='#fffad0';ctx.fillRect(sx+7,sy,3,1);  // topo
+      ctx.fillStyle='#d0c8a0';ctx.fillRect(sx+11,sy+1,1,2); // gotejamento
+      // Pavio
+      ctx.fillStyle='#302010';ctx.fillRect(sx+9,sy,1,1);
+      // Chama animada
+      const fl=Math.sin(n*.28),fl3=Math.cos(n*.19);
+      const fo=fl>.3?1:0,fo2=fl3>.25?1:0;
+      ctx.fillStyle='#ff6010';ctx.fillRect(sx+8,sy-3+fo,3,3);   // halo externo
+      ctx.fillStyle='#ffb820';ctx.fillRect(sx+8,sy-4+fo,3,3);   // chama
+      ctx.fillStyle='#fff060';ctx.fillRect(sx+9,sy-5+fo2,2,2);  // ponta
+      ctx.fillStyle='#fffbd0';ctx.fillRect(sx+9,sy-4,1,1);      // centro
       break;
     }
     case T_M:{
       ctx.fillStyle='#1c1510';ctx.fillRect(sx,sy,T,T);
-      ctx.fillStyle='#384858';ctx.fillRect(sx+2,sy+1,T-4,T-2);
-      ctx.fillStyle='#5080a0';ctx.fillRect(sx+3,sy+2,T-6,T-4);
-      const fogY=~~(Math.sin(n*.04)*2.5);
-      ctx.fillStyle='rgba(30,60,100,0.55)';
-      ctx.fillRect(sx+3,sy+2+fogY,T-6,2);
-      ctx.fillStyle='rgba(20,50,90,0.45)';
-      ctx.fillRect(sx+3,sy+7+(~~(Math.cos(n*.05+1)*2)),T-6,2);
-      ctx.fillStyle='rgba(40,80,120,0.35)';
-      ctx.fillRect(sx+3,sy+11+(fogY%3),T-6,1);
-      ctx.fillStyle='#78b0c8';ctx.fillRect(sx+4,sy+3,1,3);
+      // Moldura (ferro ornamentado)
+      ctx.fillStyle='#2a4058';ctx.fillRect(sx+1,sy,T-2,T);
+      ctx.fillStyle='#3a5878';
+      ctx.fillRect(sx+1,sy,T-2,1);ctx.fillRect(sx+1,sy+T-1,T-2,1); // h
+      ctx.fillRect(sx+1,sy,1,T);ctx.fillRect(sx+T-2,sy,1,T);        // v
+      // Ornamentos de canto
+      ctx.fillStyle='#5080a0';
+      [[sx+1,sy],[sx+T-3,sy],[sx+1,sy+T-2],[sx+T-3,sy+T-2]]
+        .forEach(([x,y])=>ctx.fillRect(x,y,2,2));
+      // Vidro
+      ctx.fillStyle='#4070a0';ctx.fillRect(sx+3,sy+2,T-6,T-4);
+      // Névoa animada (3 camadas)
+      const fa=Math.sin(n*.04),fb=Math.cos(n*.05+1);
+      ctx.fillStyle='rgba(10,40,90,0.65)';
+      ctx.fillRect(sx+3,sy+2+~~(fa*2.2),T-6,3);
+      ctx.fillStyle='rgba(20,60,110,0.5)';
+      ctx.fillRect(sx+4,sy+6+~~(fb*2),T-8,2);
+      ctx.fillStyle='rgba(8,35,80,0.55)';
+      ctx.fillRect(sx+3,sy+10+~~(fa*1.5)%3,T-6,2);
+      // Reflexo (destaque canto sup-esq)
+      ctx.fillStyle='rgba(160,210,255,0.45)';
+      ctx.fillRect(sx+3,sy+2,3,4);ctx.fillRect(sx+3,sy+2,T-6,1);
       break;
     }
     case T_A:{
       ctx.fillStyle='#1c1510';ctx.fillRect(sx,sy,T,T);
-      ctx.fillStyle='#220e1e';ctx.fillRect(sx,sy+9,T,T-9);
-      ctx.fillStyle='#2a1626';ctx.fillRect(sx+2,sy+6,T-4,4);
-      ctx.fillStyle='#2e1828';ctx.fillRect(sx+4,sy+4,T-8,3);
+      // Base em pedra
+      ctx.fillStyle='#1a0c1c';ctx.fillRect(sx,sy+10,T,6);
+      ctx.fillStyle='#22122a';ctx.fillRect(sx+1,sy+7,T-2,4);
+      ctx.fillStyle='#281628';ctx.fillRect(sx+2,sy+5,T-4,3);
+      // Arco gótico (topo do altar)
+      ctx.fillStyle='#1e1030';ctx.fillRect(sx+4,sy+2,T-8,4);
+      ctx.fillStyle='#281840';
+      ctx.fillRect(sx+4,sy+2,1,4);ctx.fillRect(sx+T-5,sy+2,1,4);
+      ctx.fillRect(sx+5,sy+2,T-10,1);
+      // Textura da pedra (juntas)
+      ctx.fillStyle='#120a1a';
+      ctx.fillRect(sx,sy+12,5,1);ctx.fillRect(sx+7,sy+12,5,1); // juntas base
+      ctx.fillRect(sx+2,sy+9,T-4,1);
+      // Velas laterais
+      ctx.fillStyle='#a89850';ctx.fillRect(sx+1,sy+4,2,5);ctx.fillRect(sx+T-3,sy+4,2,5);
+      ctx.fillStyle='#d0c878';ctx.fillRect(sx+1,sy+4,1,5);  // brilho esq
+      const cf=Math.sin(n*.25)>.3;
+      ctx.fillStyle='#ffb020';
+      ctx.fillRect(sx+1,sy+3+(cf?1:0),2,1);ctx.fillRect(sx+T-3,sy+3+(cf?1:0),2,1);
+      ctx.fillStyle='#ffff80';
+      ctx.fillRect(sx+1,sy+2+(cf?1:0),1,1);ctx.fillRect(sx+T-3,sy+2+(cf?1:0),1,1);
+      // Runa central (pulsante)
       const ph=n*.09;
-      const rr=~~(108+Math.sin(ph)*52),rb=~~(128+Math.sin(ph+1.2)*62);
+      const rr=~~(125+Math.sin(ph)*55),rb=~~(145+Math.sin(ph+1.2)*65);
+      // Halo da runa
+      ctx.fillStyle=`rgba(${rr},0,${rb},0.25)`;ctx.fillRect(sx+4,sy+2,8,8);
+      // Runa (cruz ornamentada)
       ctx.fillStyle=`rgb(${rr},0,${rb})`;
-      ctx.fillRect(sx+6,sy+2,4,2);ctx.fillRect(sx+5,sy+3,6,1);ctx.fillRect(sx+7,sy+1,2,1);
+      ctx.fillRect(sx+7,sy+3,2,5);ctx.fillRect(sx+5,sy+5,6,1);
+      ctx.fillRect(sx+6,sy+4,4,1);ctx.fillRect(sx+7,sy+2,2,1);
+      // Brilho da runa
+      ctx.fillStyle='rgba(255,200,255,0.5)';ctx.fillRect(sx+8,sy+4,1,1);
       break;
     }
   }
@@ -601,25 +719,89 @@ function drawTile(sx,sy,tp,c,r){
 function rPlayer(){
   const sx=~~(S.px-S.cx),sy=~~(S.py-S.cy);
   const f=S.pf,n=S.frame;
-  ctx.fillStyle='rgba(0,0,0,.35)';ctx.fillRect(sx-4,sy+4,9,3);
-  ctx.fillStyle='#221a0c';ctx.fillRect(sx-4,sy-3,9,9);
-  ctx.fillStyle='#16100a';ctx.fillRect(sx-3,sy+2,7,5);
-  ctx.fillStyle='#12100a';
-  if(S.moving&&f){ctx.fillRect(sx-3,sy+5,3,2);ctx.fillRect(sx+1,sy+4,3,2);}
-  else{ctx.fillRect(sx-2,sy+5,2,2);ctx.fillRect(sx+1,sy+5,2,2);}
-  ctx.fillStyle='#bc9040';ctx.fillRect(sx-2,sy-8,6,5);
-  ctx.fillStyle='#1a1210';
-  ctx.fillRect(sx-4,sy-9,9,3);ctx.fillRect(sx-4,sy-8,2,4);ctx.fillRect(sx+3,sy-8,2,4);
-  ctx.fillStyle='#e0d8a0';
-  if(S.face===3)ctx.fillRect(sx-1,sy-6,1,1);
-  else if(S.face===1)ctx.fillRect(sx+2,sy-6,1,1);
-  else if(S.face===2){ctx.fillRect(sx-1,sy-6,1,1);ctx.fillRect(sx+2,sy-6,1,1);}
-  ctx.fillStyle='#583c10';ctx.fillRect(sx+4,sy-4,2,6);
-  ctx.fillStyle='#b86c18';ctx.fillRect(sx+4,sy-5,3,2);
-  const fl2=Math.sin(n*.21);
-  ctx.fillStyle=fl2>.25?'#ffc028':'#ff8c18';
-  ctx.fillRect(sx+4,sy-7+(fl2>.25?1:0),2,2);
-  ctx.fillStyle='#ffe098';ctx.fillRect(sx+5,sy-6,1,1);
+
+  // Sombra elíptica no chão
+  ctx.fillStyle='rgba(0,0,0,.28)';
+  ctx.fillRect(sx-5,sy+6,11,2);ctx.fillRect(sx-4,sy+7,9,1);
+
+  // ── ROBE INFERIOR (fluindo) ──
+  ctx.fillStyle='#1a1208';ctx.fillRect(sx-4,sy,9,7);
+  // Bainhas da robe (assimétricas na caminhada)
+  ctx.fillStyle='#130e06';
+  if(f===0){
+    ctx.fillRect(sx-4,sy+5,3,3);ctx.fillRect(sx+2,sy+5,3,3);
+    ctx.fillRect(sx-2,sy+7,5,1);
+  } else {
+    ctx.fillRect(sx-4,sy+4,3,4);ctx.fillRect(sx+2,sy+6,3,2);
+    ctx.fillRect(sx-3,sy+7,7,1);
+  }
+  // Dobra central da robe (realce)
+  ctx.fillStyle='#221a0c';ctx.fillRect(sx-1,sy,3,6);
+
+  // ── CORPO SUPERIOR E OMBROS ──
+  ctx.fillStyle='#1e1608';ctx.fillRect(sx-4,sy-5,9,6);
+  ctx.fillStyle='#281e0e';
+  ctx.fillRect(sx-5,sy-4,2,4); // ombro esq
+  ctx.fillRect(sx+4,sy-4,2,4); // ombro dir
+  // Broche/fecho no peito
+  ctx.fillStyle='#806030';ctx.fillRect(sx-1,sy-3,3,2);
+  ctx.fillStyle='#c0a048';ctx.fillRect(sx,sy-3,1,1);
+
+  // ── CAPUZ ──
+  ctx.fillStyle='#161008';
+  ctx.fillRect(sx-4,sy-12,9,4);  // capuz (topo)
+  ctx.fillRect(sx-5,sy-10,2,8);  // lateral esq pendente
+  ctx.fillRect(sx+4,sy-10,2,7);  // lateral dir pendente
+  ctx.fillStyle='#0e0c06';ctx.fillRect(sx-3,sy-9,7,2); // sombra interna
+
+  // ── ROSTO ──
+  ctx.fillStyle='#c09048';ctx.fillRect(sx-2,sy-11,5,5);
+  ctx.fillStyle='#a07838';ctx.fillRect(sx,sy-9,1,1); // sombra do nariz
+  // Olhos (por direção)
+  ctx.fillStyle='#e8e0a0';
+  if(S.face===0){
+    ctx.fillStyle='#604838'; // de costas: olhos ocultos
+    ctx.fillRect(sx-1,sy-9,1,1);ctx.fillRect(sx+2,sy-9,1,1);
+  } else if(S.face===3){
+    ctx.fillRect(sx-2,sy-9,1,1);
+    ctx.fillStyle='rgba(232,224,160,0.25)';ctx.fillRect(sx+1,sy-9,1,1);
+  } else if(S.face===1){
+    ctx.fillRect(sx+3,sy-9,1,1);
+    ctx.fillStyle='rgba(232,224,160,0.25)';ctx.fillRect(sx,sy-9,1,1);
+  } else {
+    ctx.fillStyle='#e8e0a0';
+    ctx.fillRect(sx-1,sy-9,1,1);ctx.fillRect(sx+2,sy-9,1,1);
+  }
+
+  // ── BOTAS ──
+  ctx.fillStyle='#141008';
+  if(f===0){
+    ctx.fillRect(sx-3,sy+6,3,2);ctx.fillRect(sx+1,sy+6,3,2);
+    // Bicos das botas
+    ctx.fillStyle='#1c140c';
+    ctx.fillRect(sx-1,sy+7,2,1);ctx.fillRect(sx+2,sy+7,2,1);
+  } else {
+    ctx.fillRect(sx-3,sy+5,3,3);ctx.fillRect(sx+1,sy+7,3,1);
+    ctx.fillStyle='#1c140c';ctx.fillRect(sx-1,sy+7,2,1);
+  }
+
+  // ── BRAÇO E TOCHA ──
+  ctx.fillStyle='#281808';ctx.fillRect(sx+4,sy-5,2,6); // braço
+  // Cabo da tocha
+  ctx.fillStyle='#6a4818';ctx.fillRect(sx+5,sy-8,2,8);
+  // Aros de ferro
+  ctx.fillStyle='#806028';
+  ctx.fillRect(sx+5,sy-5,2,1);ctx.fillRect(sx+5,sy-2,2,1);
+  // Cápsula da tocha
+  ctx.fillStyle='#c08820';ctx.fillRect(sx+4,sy-10,4,3);
+  ctx.fillStyle='#e0a030';ctx.fillRect(sx+4,sy-10,4,1);
+  // Chama (animada, mais volumosa)
+  const fl2=Math.sin(n*.22),fl3=Math.cos(n*.17);
+  const fo=fl2>.3?1:0,fo2=fl3>.25?1:0;
+  ctx.fillStyle='#ff5808';ctx.fillRect(sx+4,sy-14+fo,4,4);   // halo laranja
+  ctx.fillStyle='#ffb018';ctx.fillRect(sx+5,sy-15+fo,3,4);   // chama principal
+  ctx.fillStyle='#fff050';ctx.fillRect(sx+5,sy-16+fo2,2,3);  // ponta quente
+  ctx.fillStyle='#fffcd0';ctx.fillRect(sx+6,sy-15,1,1);      // núcleo branco
 }
 
 // ── ILUMINACAO ────────────────────────────────────────────────────
