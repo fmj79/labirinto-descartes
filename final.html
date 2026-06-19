@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width">
+<title>Ventos Modernos — Final</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;min-height:100vh;background:#03040a;display:flex;
+  align-items:center;justify-content:center;flex-direction:column}
+#c{display:block;width:min(96vw,1280px);height:auto;aspect-ratio:16/9;
+  image-rendering:pixelated;image-rendering:crisp-edges;cursor:default;
+  border:2px solid #2a2018;
+  box-shadow:0 0 50px rgba(120,90,40,.15),0 0 2px rgba(180,140,60,.30)}
+#sub{font-family:'Press Start 2P',monospace;font-size:9px;color:#3a3020;
+  margin-top:8px;letter-spacing:.5px;text-align:center}
+</style>
+</head>
+<body>
+<canvas id="c" width="640" height="360"></canvas>
+<div id="sub">ENTER voltar ao hub  ·  R reiniciar a jornada</div>
+<script>
+'use strict';
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const W=320,H=180;
+
+function vmProgress(){try{return JSON.parse(localStorage.getItem('vm_progress')||'{}');}catch(e){return{};}}
+function vmSetCompleted(){const p=vmProgress();p.completed=true;localStorage.setItem('vm_progress',JSON.stringify(p));}
+function vmReset(){localStorage.removeItem('vm_progress');}
+
+const S={t:0,frame:0,canAdvance:false};
+vmSetCompleted();
+
+window.addEventListener('keydown',e=>{
+  if(e.code==='Enter'||e.code==='Space'){if(S.canAdvance)location.href='index.html';e.preventDefault();}
+  if(e.code==='KeyR'){if(S.canAdvance){vmReset();location.href='index.html';}}
+});
+
+function render(){
+  ctx.setTransform(2,0,0,2,0,0);
+  ctx.clearRect(0,0,W,H);
+  const t=S.t;
+
+  // Flash inicial — mescla das três paletas (gótico → âmbar → azul-frio → dourado-síntese)
+  const p=Math.min(1,t/1.6);
+  const r=~~(120+p*110),g=~~(95+p*100),b=~~(150-p*60);
+  ctx.fillStyle=`rgb(${r},${g},${b})`;
+  ctx.fillRect(0,0,W,H);
+
+  if(t>1.2){
+    ctx.fillStyle='rgba(6,5,12,.90)';ctx.fillRect(0,0,W,H);
+    const ga=ctx.createRadialGradient(W/2,H/2,0,W/2,H/2,W*.85);
+    ga.addColorStop(0,'rgba(220,180,90,.24)');ga.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=ga;ctx.fillRect(0,0,W,H);
+    const ta=Math.min(1,(t-1.2)/.9);
+    ctx.globalAlpha=ta;ctx.textAlign='center';
+
+    // Fase 1 — reflexão
+    if(t<3.4){
+      ctx.fillStyle='#a89058';ctx.font='3px "Press Start 2P"';
+      ctx.fillText('Três rostos do dogmatismo caíram.',W/2,H/2-30);
+      ctx.fillStyle='#d8c078';ctx.font='4px "Press Start 2P"';
+      ctx.fillText('Mas vencer não era o objetivo.',W/2,H/2-16);
+      ctx.fillStyle='#a89058';ctx.font='3px "Press Start 2P"';
+      ctx.fillText('Era aprender a pensar com rigor.',W/2,H/2-4);
+    }
+    // Fase 2 — lema kantiano
+    if(t>3.0){
+      const ta2=Math.min(1,(t-3.0)/.9);ctx.globalAlpha=ta*ta2;
+      ctx.fillStyle='rgba(6,5,12,.74)';ctx.fillRect(0,0,W,H);
+      ctx.fillStyle='#f0d878';ctx.font='9px "Press Start 2P"';
+      ctx.fillText('SAPERE AUDE',W/2,H/2-2);
+      ctx.fillStyle='#7a6840';ctx.font='3px "Press Start 2P"';
+      ctx.fillText('[ Ouse saber — Immanuel Kant, 1784 ]',W/2,H/2+12);
+    }
+    // Fase 3 — síntese do arco completo
+    if(t>4.8){
+      const ta3=Math.min(1,(t-4.8)*.75);ctx.globalAlpha=ta*ta3;
+      ctx.fillStyle='#9a8860';ctx.font='3px "Press Start 2P"';
+      ctx.fillText('Descartes ensinou a dúvida metódica.',W/2,H/2+30);
+      ctx.fillText('Bacon, Locke e Hume ensinaram a experiência.',W/2,H/2+40);
+      ctx.fillStyle='#d8c078';
+      ctx.fillText('Kant revelou os limites — e o fundamento — da razão.',W/2,H/2+52);
+    }
+    // Fase 4 — parabéns
+    if(t>6.6){
+      const ta4=Math.min(1,(t-6.6)*.85);ctx.globalAlpha=ta*ta4;
+      ctx.fillStyle='#f0d878';ctx.font='6px "Press Start 2P"';
+      ctx.fillText('PARABÉNS!',W/2,H/2+70);
+      ctx.fillStyle='#a89058';ctx.font='3px "Press Start 2P"';
+      ctx.fillText('Ventos Modernos: Uma Revisão Filosófica — concluída.',W/2,H/2+80);
+    }
+    // Fase 5 — gancho leve para o Game 2
+    if(t>8.4){
+      const ta5=Math.min(1,(t-8.4)*.6);ctx.globalAlpha=ta*ta5;
+      ctx.fillStyle='#5a4f38';ctx.font='3px "Press Start 2P"';
+      ctx.fillText('Mas toda crítica tem seus próprios pontos cegos...',W/2,H/2+96);
+      ctx.fillStyle='#403828';
+      ctx.fillText('Quatro silhuetas aguardam no horizonte.',W/2,H/2+106);
+      ctx.fillText('[ Em breve — a Crítica Decolonial ]',W/2,H/2+116);
+    }
+    ctx.globalAlpha=1;ctx.textAlign='left';
+  }
+
+  if(t>10.0){
+    S.canAdvance=true;
+    ctx.textAlign='center';
+    ctx.fillStyle='rgba(6,5,12,.94)';ctx.fillRect(0,H-32,W,32);
+    ctx.fillStyle='#6a5f48';ctx.font='3px "Press Start 2P"';
+    ctx.fillText('Turma 51 — Fundamentos Filosóficos e Epistemológicos — UNIFOR',W/2,H-22);
+    ctx.fillText('Prof. Dr. Filipe de Menezes Jesuino',W/2,H-15);
+    if(S.frame%30<20){
+      ctx.fillStyle='#f0d878';ctx.font='4px "Press Start 2P"';
+      ctx.fillText('ENTER → voltar ao hub',W/2,H-5);
+    }
+    ctx.textAlign='left';
+  }
+}
+
+function loop(ts){
+  const dt=Math.min((ts-(S.lastT||ts))/1000,.05);
+  S.lastT=ts;S.t+=dt;S.frame++;
+  render();
+  requestAnimationFrame(loop);
+}
+document.fonts.ready.then(()=>requestAnimationFrame(loop));
+</script>
+</body>
+</html>

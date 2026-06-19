@@ -1,0 +1,1549 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width">
+<title>Ventos Modernos — Cap. 3: O Calvinista de Königsberg</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;min-height:100vh;background:#040508;display:flex;
+  align-items:center;justify-content:center;flex-direction:column}
+#c{display:block;width:min(96vw,1280px);height:auto;aspect-ratio:16/9;
+  image-rendering:pixelated;image-rendering:crisp-edges;cursor:default;
+  border:2px solid #1a2840;
+  box-shadow:0 0 50px rgba(60,90,180,.18),0 0 2px rgba(80,120,200,.4)}
+#sub{font-family:'Press Start 2P',monospace;font-size:9px;color:#253050;
+  margin-top:8px;letter-spacing:.5px;text-align:center}
+</style>
+</head>
+<body>
+<canvas id="c" width="640" height="360"></canvas>
+<div id="sub">WASD · E interagir · 1 2 3 responder · setas+ENTER selecionar</div>
+<script>
+'use strict';
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const W=320,H=180,T=16;
+
+// ── VENTOS MODERNOS — progresso compartilhado entre capítulos ──────
+function vmProgress(){try{return JSON.parse(localStorage.getItem('vm_progress')||'{}');}catch(e){return{};}}
+function vmComplete(stage){const p=vmProgress();p[stage]=true;localStorage.setItem('vm_progress',JSON.stringify(p));}
+const lc=document.createElement('canvas');
+lc.width=640;lc.height=360;
+const lx=lc.getContext('2d');
+
+// ── TILES ──────────────────────────────────────────────────────────
+const VOID=0,FLOOR=1,WALL=2,DOOR=3;
+const T_TB=4,T_KT=5,T_TELE=6,T_RELO=7,T_PRIS=8;
+const T_CP1=9,T_CP2=10,T_CP3=11,T_CALV=12;
+
+// ── MAPA 30×36 ─────────────────────────────────────────────────────
+const MRAW=[
+'##############################', //  0
+'#............................#', //  1
+'#............................#', //  2
+'#...1....2....3....4.........#', //  3 tábuas cols 4,9,14,19
+'#............................#', //  4 start col 15
+'#.......................K....#', //  5 mesa K col 24
+'#............................#', //  6
+'#...5....6....7....8.........#', //  7 tábuas cols 4,9,14,19
+'#............................#', //  8
+'#............................#', //  9
+'#............................#', // 10
+'#############DDD##############', // 11 porta 1
+'#############...##############', // 12
+'#############...##############', // 13
+'#............................#', // 14 Setor II: Observatório
+'#............................#', // 15
+'#....T.......................#', // 16 telescópio col 5
+'#............................#', // 17
+'#..............R.............#', // 18 relógio col 15
+'#............................#', // 19
+'#......................P.....#', // 20 prisma col 23
+'#............................#', // 21
+'#............................#', // 22
+'#############DDD##############', // 23 porta 2
+'#############...##############', // 24
+'#############...##############', // 25
+'#............................#', // 26 Setor III: Sala da Crítica
+'#...............X............#', // 27 calvinista col 16
+'#............................#', // 28
+'#............................#', // 29
+'#.....A.......B.......C......#', // 30 cenários cols 6,14,22
+'#............................#', // 31
+'#............................#', // 32
+'#............................#', // 33
+'#............................#', // 34
+'##############################', // 35
+];
+const MR=MRAW.length,MC=MRAW[0].length;
+const MAP=MRAW.map(r=>[...r].map(ch=>({
+  ' ':VOID,'#':WALL,'D':DOOR,'.':FLOOR,
+  '1':T_TB,'2':T_TB,'3':T_TB,'4':T_TB,
+  '5':T_TB,'6':T_TB,'7':T_TB,'8':T_TB,
+  'K':T_KT,'T':T_TELE,'R':T_RELO,'P':T_PRIS,
+  'A':T_CP1,'B':T_CP2,'C':T_CP3,'X':T_CALV
+}[ch]??VOID)));
+
+const DR1=[[11,13],[11,14],[11,15]];
+const DR2=[[23,13],[23,14],[23,15]];
+
+// ── TÁBUAS DE KANT (Missão 1) ─────────────────────────────────────
+// Chave = row_col; corretos: 7_4, 7_9, 7_14
+const KANT_TABLETS={
+  '3_4':{name:'Solteiros são não-casados.',
+    desc:['Tipo: Analítico a priori.',
+          '"Não-casado" já está contido',
+          'no conceito de "solteiro". Trivial.']},
+  '3_9':{name:'Um triângulo tem três ângulos.',
+    desc:['Tipo: Analítico a priori.',
+          'A definição de triângulo já',
+          'contém os três ângulos. Trivial.']},
+  '3_14':{name:'Este livro é pesado.',
+    desc:['Tipo: Sintético a posteriori.',
+          '"Pesado" acrescenta ao sujeito,',
+          'mas precisa de experiência.']},
+  '3_19':{name:'A neve costuma ser branca.',
+    desc:['Tipo: Sintético a posteriori.',
+          'Acrescenta informação — porém',
+          'contingente. Poderia ser falsa.']},
+  '7_4': {name:'7 + 5 = 12',
+    desc:['Tipo: Sintético a priori.',
+          '"12" não está em "7" nem em "5".',
+          'Acrescenta algo. E é necessário.']},
+  '7_9': {name:'Todo evento tem uma causa.',
+    desc:['Tipo: Sintético a priori.',
+          '"Causa" não está em "evento",',
+          'mas vale para toda experiência.']},
+  '7_14':{name:'A linha reta é o menor caminho.',
+    desc:['Tipo: Sintético a priori.',
+          '"Menor" não está em "linha reta",',
+          'mas é necessário geometricamente.']},
+  '7_19':{name:'Eu sinto frio agora.',
+    desc:['Tipo: Sintético a posteriori.',
+          '"Frio" acrescenta ao sujeito,',
+          'mas é particular e empírico.']},
+};
+const CORRECT_TABLETS=new Set(['7_4','7_9','7_14']);
+
+// ── INSTRUMENTOS (Missão 2) ────────────────────────────────────────
+const KANT_INSTR=[
+  {key:'kant_tele',name:'Telescópio',idx:0,
+   intro:['— O Calvinista aponta:','',
+          'Estrelas separadas no espaço.',
+          'O espaço pertence às estrelas,',
+          'ao entendimento, ou à nossa',
+          'forma de perceber o mundo?'],
+   q:'A que pertence o espaço?',
+   opts:['1. Propriedade das estrelas',
+         '2. Conceito do entendimento',
+         '3. Forma pura da intuição externa'],
+   ok:2,
+   fbs:[
+     ['Newton pensava assim.','Mas nunca percebemos espaço vazio —','percebemos objetos no espaço.','Espaço é condição, não conteúdo.'],
+     ['Kant: intuição ≠ conceito.','O espaço não pode ser definido,','só intuído. Tente imaginar','a ausência total de espaço.'],
+     null]},
+  {key:'kant_relo',name:'Relógio',idx:1,
+   intro:['— O Calvinista indica o relógio:','',
+          'O tempo pertence aos objetos,',
+          'é conceito do entendimento,',
+          'ou forma da nossa',
+          'percepção interna?'],
+   q:'A que pertence o tempo?',
+   opts:['1. Propriedade dos objetos físicos',
+         '2. Conceito do entendimento',
+         '3. Forma pura da intuição interna'],
+   ok:2,
+   fbs:[
+     ['Se o tempo fosse dos objetos,','existiria sem percepção.','Passado e futuro são formas','de como percebemos estados.'],
+     ['Conceitos podem ser definidos.','O tempo só pode ser mostrado —','é intuição pura, não conceito.'],
+     null]},
+  {key:'kant_pris',name:'Prisma',idx:2,
+   intro:['— O Calvinista examina o prisma:','',
+          'A cor vermelha ao decompor',
+          'a luz: propriedade da luz,',
+          'forma de intuição,',
+          'ou efeito do aparato visual?'],
+   q:'O que é a cor vermelha?',
+   opts:['1. Propriedade objetiva da luz',
+         '2. Forma pura da intuição visual',
+         '3. Efeito do aparato visual'],
+   ok:2,
+   fbs:[
+     ['Parcialmente verdadeiro (frequência),','mas não explica a experiência.','Um daltônico não vê o mesmo.'],
+     ['Cuidado. Espaço e tempo condicionam','TODA experiência — são universais.','Cor é qualidade secundária (Stage 2).'],
+     null]},
+];
+
+// ── CENÁRIOS COPERNICANOS (Missão 3) ──────────────────────────────
+// Respostas corretas: B (idx 1), C (idx 2), C (idx 2)
+const KANT_SCEN=[
+  {name:'A Analogia Astronômica',idx:0,
+   sit:['Copérnico: não o sol orbita a terra',
+        '— é a terra que orbita o sol.',
+        '',
+        'Qual inversão análoga','Kant propõe na epistemologia?'],
+   q:'Qual é a virada copernicana?',
+   opts:['A. A mente se conforma aos objetos',
+         'B. Os objetos se conformam à mente',
+         'C. Mente e objetos são independentes'],
+   ok:1,
+   fbs:[
+     ['Essa é a visão pré-crítica.','Kant inverteu: a mente não espera','— ela estrutura ativamente.'],
+     null,
+     ['Independência total = ceticismo.','Kant não nega a relação:','inverte-a. Objetos dependem do sujeito.']]},
+  {name:'A Fonte das Leis Naturais',idx:1,
+   sit:['De onde vêm as leis que',
+        'regulam a natureza —',
+        'causalidade, substância,',
+        'reciprocidade entre forças?'],
+   q:'Qual a origem das leis naturais?',
+   opts:['A. Das observações acumuladas',
+         'B. Da razão pura (dogmatismo)',
+         'C. Das categorias puras do entendimento'],
+   ok:2,
+   fbs:[
+     ['Voltamos a Hume.','Leis da observação são hábito —','não podem ser necessárias.'],
+     ['Isso é o dogmatismo que Kant combate.','Razão pura sem experiência','gera as Antinomias da Razão.'],
+     null]},
+  {name:'O Preço da Inversão',idx:2,
+   sit:['Se o sujeito estrutura a',
+        'experiência pelas formas',
+        'de intuição e categorias,',
+        '',
+        'o que podemos conhecer?'],
+   q:'O que o sujeito pode conhecer?',
+   opts:['A. A realidade em si (coisa-em-si)',
+         'B. Nada — ceticismo total',
+         'C. Apenas os fenômenos'],
+   ok:2,
+   fbs:[
+     ['A coisa-em-si escapa à cognição.','Nossas estruturas criam a distância','entre fenômeno e noumeno.'],
+     ['Ceticismo total era o risco de Hume.','Kant: temos conhecimento seguro','— limitado aos fenômenos.'],
+     null]},
+];
+
+// ── SPRITES DA PERSONAGEM (16×24 px · longilínea) ─────────────────
+const PPAL={_:null,H:'#2a1808',h:'#5a3820',S:'#c8885a',s:'#a06030',e:'#f0f4f8',
+            W:'#f0ece0',w:'#d8d4c8',v:'#9870c0',r:'#c07888',g:'#6aaa40',
+            J:'#7090c0',j:'#4870a0',n:'#d4c8b0',G:'#c8a030'};
+const PF0=[
+'____HHHHHHHH____','___HhhhhhhhhhH__','__HhSSSSSSSShhH_',
+'__HhSeHSSeHShhH_','__HhSSSSSSSShhH_','___HhSsSSsShhH__',
+'___HhSSSSSShhH__','___HhSWWWWShhH__','__HhhWWWWWWWhhH_',
+'__HhhWWWWWWWhhH_','__HhhWWWWWWWhhH_','__HhhWvWrWgWhhH_',
+'__HhhWWWWWWWhhH_','__HhhWWWWWWWhhH_','___HhWWWWWWhhH__',
+'__HhhjJJJJjhhH__','___HhjJJJJjhH___','____jJJJjJJJj___',
+'____jJJJjJJJj___',
+// pernas em passada alternada: uma avança e apoia, a outra recua e se ergue
+'____jJJJ_jJJJ___','_____jJJ_jJJJ___','______JJ_jJJJ___',
+'______nn_nnnnn__','__________nnnnn_'];
+const PF1=[...PF0.slice(0,19),
+'___JJJj_JJJj____','___JJJj_JJj_____','___JJJj_JJ______',
+'__nnnnn_nn______','_nnnnn__________'];
+const PB0=[
+'____HHHHHHHH____','___HhhhhhhhhhH__','__HhHHHHHHHHhhH_',
+'__HhHhHhHhHHhhH_','_HhHHhhhhhHHhHH_','_HhHHhhhhhHHhHH_',
+'_HhHHhhhhhhHhHH_','_HhHHhhhhhhHhHH_','_HhHHhhhhhhHhHH_',
+'_HhHHhhhhhhHhHH_','_HhHHhhhhhhHhHH_','_HhHHhhhhhhHhHH_',
+'_HhHHhhhhhhHhHH_','_HhHHhhhhhhHhHH_','__HhHHhhhhHHhH__',
+'__HhhjJJJJjhhH__','___HhjJJJJjhH___','____jJJJjJJJj___',
+'____jJJJjJJJj___',
+'____jJJJ_jJJJ___','_____jJJ_jJJJ___','______JJ_jJJJ___',
+'______nn_nnnnn__','__________nnnnn_'];
+const PB1=[...PB0.slice(0,19),
+'___JJJj_JJJj____','___JJJj_JJj_____','___JJJj_JJ______',
+'__nnnnn_nn______','_nnnnn__________'];
+const PS0=[
+'____HHHHHHHH____','___HhhhhhHHhH___','__HhhSSSSHHhHH__',
+'_HhhSSSSSHHhHH__','_HhhSSSSeHhHH___','_HhhSSSSsSHhH___',
+'_HhhSSSSSSHhH___','_HhhSSSSHhH_____','_HhhhWWWWHhH____',
+'_HhhhWWWWHhH____','_HhhhWWWWHhH____','_HhhhWvWWHhH____',
+'_HhhhWWWWHhH____','_HhhhWWWWHhH____','_HhhhWWWHhH_____',
+'_HhhhJJJJHh_____','_HhhhJJJJHh_____','_HhhhJJJJH______',
+'__HhhJJJjH______','___HhJJJjH______','____HjJJjH______',
+'____HjJJjH______','____nnnnnH______','____nnnnH_______'];
+const PS1=[...PS0.slice(0,22),'__nnnnn_nnnH____','__nnnnn_nnH_____'];
+
+// ── TILES — pixel arrays 16×16 ─────────────────────────────────────
+const TPAL={
+  _:null,
+  A:'#0d1220',B:'#141a2c',C:'#1a2238',D:'#1e2a42',E:'#232f48',
+  M:'#0a1018',P:'#131820',Q:'#171e30',R:'#1c2640',T:'#222e4c',U:'#293558',
+  F:'#0e1018',K:'#1a1008',L:'#261808',N:'#341f0a',I:'#384060',Z:'#5a6080',
+  V:'#181e38',Y:'#22294e',O:'#1a2040',X:'#2c3560',G:'#3c5090',W:'#283070',
+  a:'#181e30',b:'#222a44',c:'#3a4468',d:'#2a3252',e:'#323c62',f:'#485680',
+  g:'#8090b0',h:'#242c4a',i:'#1e2c48',j:'#2a3a5c',k:'#3a4a70',l:'#4a5a80',
+  m:'#6878a0',n:'#b09878',o:'#201c14',p:'#1a2030',q:'#242e44',r:'#1c2838',
+  s:'#28364e',t:'#7888a8',u:'#181012',v:'#384060',w:'#4a5882',
+  x:'#1e2840',y:'#1a2238',z:'#1a2440',
+  H:'#384070',J:'#3060a0',S:'#506090'
+};
+const CP1_TILE=['________________','________________','__zHHHHHHHHHHz__','__HzHHHHHHHHzH__',
+'__HJJzzzzzzzzH__','__HJJzzzzzzzzH__','__HzzzzzzzzzzH__','__HzzzzzzzzzzH__',
+'__zHHHHHHHHHHz__','_xzHHHHHHHHHHzx_','_UUUUUUUUUUUUUU_','_UxxxxxxxxxxxRQ_',
+'_UxxxxxxxxxxxRQ_','_UxxxxxxxxxxxRQ_','_UxxxxxxxxQQQRQ_','_QQQQQQQQQQQQQQ_'];
+const CP2_TILE=['________________','________________','__HHHHHHHHHHHH__','__HzzHRRHzzHRR__',
+'__HHHHHHHHHHHH__','__HRRHzzHRRHzz__','__HHHHHHHHHHHH__','__HzzHRRHzzHRR__',
+'__HHHHHHHHHHHH__','_xHzzHzzHzzHzzx_','_UUUUUUUUUUUUUU_','_UxxxxxxxxxxxRQ_',
+'_UxxxxxxxxxxxRQ_','_UxxxxxxxxxxxRQ_','_UxxxxxxxxQQQRQ_','_QQQQQQQQQQQQQQ_'];
+const CP3_TILE=['________________','________________','__zzzzzzHRPPPP__','__SSSSSSHRPPPP__',
+'__SJJSSSHRPPPP__','__SJJSSSHRPPPP__','__SJJSSSHRPPPP__','__SSSSSSHRPPPP__',
+'__zzzzzzHRPPPP__','_xzzzzzzHRPPPPx_','_UUUUUUUUUUUUUU_','_UxxxxxxxxxxxRQ_',
+'_UxxxxxxxxxxxRQ_','_UxxxxxxxxxxxRQ_','_UxxxxxxxxQQQRQ_','_QQQQQQQQQQQQQQ_'];
+const TB_TILE=['XOOOOOOOOOOOOOOO','XOOOOOOOOOOOOOOO','XVXYYYYYYYYYYYVV','XVYYGGGGGGGGYYVV',
+'XVYYYWWYYYYYYYVV','XVYYYWWYYYYYYYVV','XVYYGGGGGGYYYYVV','XVYYYYYYYWWYYYVV',
+'XVYYYYYYYWWYYYVV','XVYYGGGGGGGGYYVV','XVYYYYYYYYYYYYVV','XVYYYYYYYYYYYYVV',
+'XVYYYYYYYYYYYYVV','XVYYYYYYYYYYYYVV','XOOOOOOOOOOOOOOO','XOOOOOOOOOOOOOOO'];
+const KT_TILE=['aaaaaaaaaaaaaaaa','aaffffffgfffffaa','aaehhhhegehhheaa','aaehhhhegehhheaa',
+'aaehhhhegehhheaa','dddddddddddddddd','dddddddddddddddd','abbbbbbbbbbbbbba',
+'abbbbbbbbbbbbbba','abbbbbbbbbbbbbba','abbbbbbbbbbbbbba','abbbbbbbbbbbbbba',
+'abbbbbbbbbbbbbba','abbbbbbbbbbbbbba','abbbbbbbbbbbbbba','abbbbbbbbbbbbbba'];
+const TELE_TILE=['________________','________________','________________','___________mmj__',
+'______jllkkkj___','______lkkkkkj___','___jkkl_________','___jkkk_________',
+'___jkkk_________','________________','____jjjjjjjj____','_____iiiiii_____',
+'_____iiiiii_____','_____iiiiii_____','____iiiiiiii____','___iiiiiiiiii___'];
+const RELO_TILE=['________________','________________','_____kkkkkk_____','____kwwmmwwv____',
+'____vwwwmwwv____','____vwwwmmmv____','____vwwwmwwv____','____vwwwwwwv____',
+'____vwwwwwwv____','____kwwwwwwv____','_____jjjjjj_____','_______ii_______',
+'_______ii_______','_______ii_______','____jiiiiiij____','____jiiiiiij____'];
+const PRIS_TILE=['________________','________________','_______kk_______','______lkki______',
+'_____ikjjki_m___','_____ikjjki_____','____ikjjjjkim___','____ikjjjjki____',
+'___ikjjjjjjkm___','___ikjjjjjjki___','________________','________________',
+'_____jiiiij_____','_____jiiiij_____','____iiiiiiii____','___jjjjjjjjjj___'];
+const CALV_TILE=['________________','________________','______oooo______','______onno______',
+'______ounu______','______nnnn______','______ssss______','_____qpptpp_____',
+'_____qpptpp_____','____prrrtrrp____','____prrrtrrp____','_____qpptpp_____',
+'_____qpptpp_____','_____qpptpp_____','______pp_pp_____','______oo_oo_____'];
+const FL_TILE=['AAAAAAAAAAAAAAAA','ACCCEEEEACCCEEEE','ACCCDDDDACCCDDDD','ADDDDDDDADDDDDDD',
+'ACCCCCCCACCCCCCC','ACCCCCCCACCCCCCC','ABBBCCCCABBBCCCC','ABBBBBBBABBBBBBB',
+'AAAAAAAAAAAAAAAA','ACCCEEEEACCCEEEE','ACCCDDDDACCCDDDD','ADDDDDDDADDDDDDD',
+'ACCCCCCCACCCCCCC','ACCCCCCCACCCCCCC','ABBBCCCCABBBCCCC','ABBBBBBBABBBBBBB'];
+const WL_TILE=['MMMMMMMMMMMMMMMM','MUUTTRRQMUUTTRRQ','MRRRRQQPMRRRRQQP','MRRRRQQPMRRRRQQP',
+'MRRRRQQPMRRRRQQP','MRRRRQQPMRRRRQQP','MQQPPPPPMQQPPPPP','MQQPPPPPMQQPPPPP',
+'MMMMMMMMMMMMMMMM','RRQQMUUTTRRQMRRQ','RRQQMRRRRQQPMRRQ','RRQQMRRRRQQPMRRQ',
+'RRQQMRRRRQQPMRRQ','RRQQMRRRRQQPMRRQ','PPPPMQQPPPPPMPPP','PPPPMQQPPPPPMPPP'];
+const DR_TILE=['FFFFFFFFFFFFFFFF','FKLNKLNKLNKLNKLF','FKLNKLNKLNKLNKLF','FKLNKLNKLNKLNKLF',
+'FKLNKLNKLNKLNKLF','FIIIIIIIIIIIIIIF','FKLNKLNKLNKLNKLF','FKLNKLNZZNKLNKLF',
+'FKLNKLNZZNKLNKLF','FKLNKLNKLNKLNKLF','FIIIIIIIIIIIIIIF','FKLNKLNKLNKLNKLF',
+'FKLNKLNKLNKLNKLF','FKLNKLNKLNKLNKLF','FKLNKLNKLNKLNKLF','FFFFFFFFFFFFFFFF'];
+
+const MIDI_B64=
+  "TVRoZAAAAAYAAQAGAPBNVHJrAAAAWgD/WAQEAhgIAP9ZAgAAAP9RAwehIIaNcP9RAwf2C4Fw/1ED"+
+  "CFKvgXD/UQMIuCWBcP9RAwknwIFw/1EDCaMbgXD/UQMKLCuBcP9RAwrFWoFw/1EDC3GwAP8vAE1U"+
+  "cmsAAAdLAP8hAQAAwEQAsAd0ALAKAIdAkENQg1tDAAVGUIFuRgACRVCBbkUAAkhQg1tIAAVKUINb"+
+  "SgCBdUpQgW5KAAJDUIFuQwACQ1B3QwABQ1B3QwABSFCBbkgAAkZQgW5GAAJFUIc7RQAFRVCDW0UA"+
+  "BUpQgmRKAARIUHdIAAFGUIFuRgACRlCBbkYAAktQgmRLAARKUHdKAAFIUIFuSAACRlCBbkYAAkVQ"+
+  "hzZFAApDUIc2QwCFWkNQgW5DAAJGUIFuRgACRVCBbkUAAkhQg1tIAAVKUIFuSgACQ1CBbkMAAkFQ"+
+  "gW5BAAJBUHdBAAFBUHdBAAFDUINbQwAFRlCBbkYAAkpQgW5KAAJIUIFuSAACSFB3SAABSFB3SAAB"+
+  "S1CBbksAAktQgW5LAAJKUIc2SgAKSlCDW0oAh0VNUIJkTQAETFB3TAABSlCCZEoABEhQd0gAAUZQ"+
+  "g1tGAAVGUIFuRgACQ1CBbkMAAkhQgmRIAARKUHdKAAFLUIFuSwACSlCBbkoAAkpQg1tKAAVKUIc2"+
+  "SgCLKkVQg1tFAAVFUIFuRQACQ1B3QwABQ1B3QwABRVCDW0UAgXVIUIFuSAACSFCBbkgAAkpQd0oA"+
+  "AUpQd0oAAUNQg1tDAAVDUIFuQwACQ1CBbkMAAkNQgW5DAAJFUHdFAAFFUHdFAAFGUINbRgAFRlCB"+
+  "bkYAAkZQd0YAAUZQd0YAAUNQgmRDAARDUHdDAAFDUIFuQwACQVCDW0EABUBQgW5AAAJBUIFuQQAC"+
+  "RVCBbkUAAkFQg1tBAAVAUIJkQAAEQFB3QAABPlCDWz4ABUVQhzZFAApFUIFuRQACRlCBbkYAAkZQ"+
+  "g1tGAAVGUINbRgCBdUZQgW5GAAJGUINbRgCBdUpQd0oAAUpQd0oAAUpQgW5KAAJKUIFuSgACTFCD"+
+  "W0wABUhQg1tIAAVIUINbSAAFRlCFSUYAB0ZQgW5GAAJFUIc2RQCDakFQg1tBAAVDUIc2QwAKSFCF"+
+  "SUgAB0ZQgW5GAAJGUIFuRgACQ1CCZEMABENQd0MAAUNQgW5DAAJCUIc2QgAKQlCBbkIAAkNQg1tD"+
+  "AAVAUIFuQAACRVCDW0UABT5QgmQ+AARAUDtAAAFBUDtBAAFDUINbQwAFQVCDW0EABUBQhUlAAAdA"+
+  "UIFuQAACQFCDW0AAgXVBUIFuQQACQFCBbkAAAj5QgW4+AAJAUINbQAAFQVCBbkEAAkVQgW5FAAJG"+
+  "UIFuRgACSlCBbkoAAklQgW5JAAJKUINbSgAFSVCBbkkAAkpQhzZKAIVaRlCBbkYAAkZQgW5GAAJL"+
+  "UIFuSwACSlCDW0oABUhQg1tIAIF1SFCDXkgAAkZQgW5GAAJFUINbRQAFR1CHNkcAg2pDUIFuQwAC"+
+  "Q1CBbkMAAkZQgmRGAARFUHdFAAFDUIFuQwACPlCBbj4AAkFQg1tBAAVBUINbQQAFQVCBbkEAAj5Q"+
+  "gW4+AAJDUIJkQwAEQVB3QQABQFCBbkAAAkFQgW5BAAJBUIFuQQACQFCBbkAAAkFQg1tBAI99RlB3"+
+  "RgABRlB3RgABRlB3RgABSFCBbkgAAkhQgW5IAAJKUIJkSgAESlB3SgABSFCHNkgAgXpIUIFuSAAC"+
+  "Q1CCZEMABEVQd0UAAUZQg1tGAAVDUINbQwAFRVCFSUUAB0VQgW5FAAJFUIc2RQCBekpQgW5KAAJD"+
+  "UHdDAAFDUHdDAAFDUHdDAAFDUHdDAAFIUINbSAAFSFCBbkgAAkFQg15BAAJBUINbQQAFRlCDXkYA"+
+  "AkVQd0UAAUNQd0MAAUVQg1tFAAVGUIc2RgCBekpQgW5KAAJKUIFuSgACSlCBbkoAAktQhzZLAApK"+
+  "UIc2SgCFWkhQgW5IAAJIUIFuSAACSFCBbkgAAkdQgW5HAAJFUIFuRQACR1CBbkcAAkdQgW5HAAJK"+
+  "UIFuSgACRlCBbkYAAkNQd0MAAUVQd0UAAUZQd0YAAUhQd0gAAUpQgW5KAAJDUIFuQwCaIkdQg1tH"+
+  "AAVHUIFuRwACR1CBbkcAAkhQg1tIAAVHUINbRwCBdUpQgW5KAAJKUIFuSgACSlCBbkoAAkxQg1tM"+
+  "AAVKUIFuSgACSlCBbkoAAkZQgW5GAAJDUIFuQwACRVCBbkUAAj5Qdz4AAUBQd0AAAUFQd0EAAUNQ"+
+  "d0MAAUVQd0UAAUZQd0YAAUhQgW5IAAI8UHc8AAE+UHc+AAFAUHdAAAFBUHdBAAFDUHdDAAFFUHdF"+
+  "AAFGUIFuRgACOlB3OgABPFB3PAABPlB3PgABQFB3QAABQVB3QQABQ1B3QwABRVCCZEUABENQO0MA"+
+  "AUFQO0EAAUBQgW5AAAJFUIFuRQACRVCDW0UABUJQg1tCAAVCUIFuQgACQlCBbkIAAkNQg1tDAAVC"+
+  "UINbQgAFRVCDW0UABUVQgW5FAAJFUIFuRQACRlCDW0YABUVQhzZFAINqRlCHO0YABUVQg1tFAAVF"+
+  "UIFuRQACQ1CBbkMAAkNQhU5DAAJCUHdCAAFAUHdAAAFCUINbQgAFQ1CHNkMAAP8vAE1UcmsAAAdK"+
+  "AP8hAQAAwUUAsQd1ALEKfwCRQ1CDW0MABUZQgW5GAAJFUIFuRQACSFCDW0gABUpQg1tKAIF1Q1CB"+
+  "bkMAAkJQgW5CAAJCUHdCAAFCUHdCAAFDUIJkQwAEQVB3QQABQFCFTkAAAkNQgW5DAAJCUIc7QgAF"+
+  "QlCDW0IABUZQgmRGAARFUHdFAAFDUIFuQwACQ1CBbkMAAkhQgmRIAARGUHdGAAFFUIFuRQACQ1CB"+
+  "bkMAAkJQgW5CAAJDUINbQwAFQlCBbkIAAkNQhzZDAIk6PlCBbj4AAkNQgW5DAAJDUHdDAAFDUHdD"+
+  "AAFGUINbRgAFRlCBbkYAAkpQgW5KAAJLUIFuSwACS1B3SwABS1B3SwABSlCBbkoAAkZQgW5GAAJF"+
+  "UIFuRQACRVB3RQABRVB3RQABSFCBbkgAAkhQgW5IAAJGUINbRgAFRVCDW0UABT5QgmQ+AAQ+UHc+"+
+  "AAE/UIFuPwACQ1CBbkMAAkFQg1tBAAVBUINbQQAFTVCCZE0ABExQd0wAAUpQgmRKAARIUHdIAAFG"+
+  "UIFuRgACRlCBbkYAAktQgmRLAARKUHdKAAFIUIFuSAACRlCBbkYAAkVQg1tFAAVHUINbRwCNFUFQ"+
+  "g1tBAAVAUIJnQAABQVB3QQABPlCBbj4AAkBQgW5AAAJBUINeQQACQ1CCZEMABEFQd0EAAUFQgW5B"+
+  "AAJAUINbQAAFQFCBbkAAAkBQgW5AAAJAUIFuQAACQVB3QQABQVB3QQABQ1CDW0MABUNQgW5DAAJD"+
+  "UHdDAAFDUHdDAAFGUIFuRgACRlCBbkYAAkZQgW5GAAJFUIFuRQACQ1CDW0MABUFQg1tBAIVVRVCB"+
+  "bkUAAkVQgW5FAAJHUIFuRwACSVCBbkkAAkpQg1tKAAVJUIFuSQACSlCBbkoAAkpQgW5KAAJKUINb"+
+  "SgAFSlCDW0oAgXVKUIFuSgACSlCDW0oAgXVGUHdGAAFGUHdGAAFHUIFuRwACR1CBbkcAAkhQg1tI"+
+  "AAVDUINbQwAFRVCDW0UABUpQhUlKAAdDUIFuQwACQlCHNkIAg2pFUINbRQAFRlCHNkYACkVQhUlF"+
+  "AAdBUIFuQQACQ1CBbkMAAkZQgmRGAARGUHdGAAFGUIFuRgACRVCDW0UABUVQg1tFAIVVSFCDXkgA"+
+  "AkVQgW5FAAJKUIJkSgAESFB3SAABRlCDW0YABUVQgW5FAAJFUIFuRQACRVCFSUUAB0VQgW5FAAJF"+
+  "UIFuRQACRVCBbkUAAkNQgW5DAAJBUIFuQQACQ1CHNkMACkFQg1tBAIF1QVCBbkEAAkVQgW5FAAJG"+
+  "UIFuRgACRVCDW0UABUVQhzZFAIVaQ1CDXkMAAkZQgW5GAAJGUINbRgAFRVCDW0UABUVQgW5FAAJD"+
+  "UIFuQwACQlCBbkIAAkNQg1tDAAVCUIFuQgACQ1CHNkMAkmpIUIFuSAACSFCBbkgAAkpQgmRKAARI"+
+  "UHdIAAFGUIVORgACRVCBbkUAAkNQgW5DAAJDUIFuQwACQVCDW0EAiD1BUHdBAAFBUHdBAAFBUHdB"+
+  "AAFBUIFuQQACQVCBbkEAAkNQgmRDAARDUHdDAAFFUIVJRQAHRlCBbkYAAkVQgmRFAARDUHdDAAFB"+
+  "UIFuQQACRVCBbkUAAkNQgmRDAARDUHdDAAE8UINbPACBdUNQgW5DAAI+UIJkPgAEQFB3QAABQVCB"+
+  "bkEAAkFQgW5BAAJAUIJkQAAEQFB3QAABQlCBbkIAAkVQgW5FAAJCUHdCAAFCUHdCAAFCUHdCAAFC"+
+  "UHdCAAFDUIFuQwACQ1CBbkMAAkBQg1tAAIF1Q1CBbkMAAkVQd0UAAUVQd0UAAUVQd0UAAUVQd0UA"+
+  "AUhQgW5IAAJIUIFuSAACRlCBbkYAAkpQgW5KAAJIUIVJSAAHSFCBbkgAAkpQhzZKAIVaRlCBbkYA"+
+  "AkZQgW5GAAJGUIFuRgACRVCDW0UABUZQg1tGAIF1Q1CBbkMAAkNQgW5DAAJDUIFuQwACQlCDW0IA"+
+  "BUNQjnZDAINqRlCHO0YABUVQg1tFAAVFUIFuRQACQ1CBbkMAAkNQhU5DAAJCUHdCAAFAUHdAAAFC"+
+  "UINbQgAFQ1CHNkMAiypHUINbRwAFR1CBbkcAAkdQgW5HAAJIUINbSAAFR1CDW0cAgXVKUIFuSgAC"+
+  "SlCBbkoAAkVQgW5FAAI+UHc+AAFAUHdAAAFBUHdBAAFDUHdDAAFFUHdFAAFGUHdGAAFIUIFuSAAC"+
+  "PFB3PAABPlB3PgABQFB3QAABQVB3QQABQ1B3QwABRVB3RQABRlCBbkYAAjpQdzoAATxQdzwAAT5Q"+
+  "dz4AAUBQd0AAAUFQd0EAAUNQd0MAAUVQgmRFAARDUDtDAAFBUDtBAAFAUIFuQAACQlCDW0IABUVQ"+
+  "g1tFAAVFUIFuRQACRVCBbkUAAkZQg1tGAAVFUINbRQAFPlCFTj4AAj5QgW4+AAI+UINbPgAFPlCH"+
+  "Nj4ACkpQhzZKAApIUIc2SAAKRlCHNkYACkVQhzZFAApHUIc2RwAA/y8ATVRyawAABzAA/yEBAADC"+
+  "RwCyB3QAsgpAg2CSPlCDWz4ABT9QgW4/AAI8UIFuPAACQ1B3QwABQVB3QQABQVB3QQABP1A7PwAB"+
+  "PlA7PgABP1CDWz8ABT5QgW4+AAI+UIFuPgACO1CBbjsAAjtQdzsAATtQdzsAATxQgmQ8AAQ6UHc6"+
+  "AAE5UIFuOQACN1CBbjcAAj5Qg1s+AAU+UINbPgAFPlCCZD4ABDxQdzwAATpQgW46AAI6UIFuOgAC"+
+  "P1CCZD8ABD5Qdz4AATxQgW48AAI8UIFuPAACQVCBbkEAAkNQgW5DAAI+UIc2PgAKN1CDWzcAiTVD"+
+  "UIFuQwACQ1CBbkMAAkFQgW5BAAI/UINbPwAFPlCDWz4AgXU6UIFuOgACOlCBbjoAAjpQdzoAATpQ"+
+  "dzoAAT5QgW4+AAJBUIFuQQACQVCBbkEAAkFQd0EAAUFQd0EAAUNQgW5DAAJDUIFuQwACQ1CDW0MA"+
+  "BUJQg1tCAIF1Q1CCZEMABEFQd0EAAT9Qg14/AAI+UIFuPgACPFCBbjwAAjxQgW48AAI+UIJkPgAE"+
+  "QFB3QAABQVCBbkEAAkFQgW5BAAJDUIJkQwAEQVB3QQABP1CFTj8AAkNQgW5DAAJCUINbQgAFQ1CH"+
+  "NkMACj5Qg1s+AAU+UIFuPgACPFB3PAABPFB3PAABPlCDWz4AiyU8UINbPAAFPFCBbjwAAjtQdzsA"+
+  "ATtQdzsAATxQg1s8AAU8UIVOPAACPFCBbjwAAj9QgW4/AAI/UHc/AAE/UHc/AAE/UINbPwAFP1CB"+
+  "bj8AAj5Qdz4AAT5Qdz4AATxQgW48AAI8UHc8AAE8UHc8AAE8UINbPAAFPFCDWzwAg2VFUINbRQAF"+
+  "QVCDW0EABUBQgW5AAAJBUHdBAAFBUHdBAAFAUINbQAAFPlCBbj4AAkFQgW5BAAJBUINbQQAFQVCD"+
+  "W0EAgXVBUIFuQQACQVCDW0EAgXVBUHdBAAFBUHdBAAFDUIFuQwACQ1CBbkMAAkNQg1tDAAVAUINb"+
+  "QAAFQlCDW0IABUNQg1tDAAU+UINbPgAFPlCHNj4ACjlQg1s5AAU+UIc7PgAFQFCDW0AABUFQgW5B"+
+  "AAI8UINbPAAFPlCBbj4AAj9QgW4/AAI/UHc/AAE/UHc/AAE+UIc7PgAFPlCDWz4ABT5Qg1s+AAVA"+
+  "UIFuQAACPFCCZzwAAT5Qdz4AAUBQd0AAAUFQd0EAAUNQg1tDAAU+UINbPgAFPlCDWz4ABT1QhUk9"+
+  "AAc9UIFuPQACPVCDWz0AiTU8UIFuPAACPlCBbj4AAkFQgW5BAAJAUIFuQAACPlCBbj4AAkBQhzZA"+
+  "AApCUIc2QgCBekFQgW5BAAJBUIFuQQACPlCBbj4AAkNQg1tDAAVBUIc7QQAFQVCBbkEAAj9QgW4/"+
+  "AAI+UIc2PgAKPlCHNj4Ag2o6UIFuOgACOlCBbjoAAj5QgmQ+AARBUHdBAAE6UIFuOgACN1CBbjcA"+
+  "AjxQg1s8AAU1UIFuNQACNVCBbjUAAjpQgmQ6AAQ5UHc5AAE3UIFuNwACN1CBbjcAAjxQg1s8AAU8"+
+  "UINbPAAFNVCDWzUAfTpQdzoAATpQdzoAATpQdzoAATxQgW48AAI8UIFuPAACPlCHOz4ABT5Qg1s+"+
+  "AAVBUINbQQCBdUFQgW5BAAJAUIJkQAAEQFB3QAABQVCHO0EABUBQgW5AAAJAUINeQAACPlCBbj4A"+
+  "Aj5Qhzs+AAU9UINbPQAFPlCHNj4AhVpDUIFuQwACQFB3QAABQFB3QAABQFB3QAABQFB3QAABQVCB"+
+  "bkEAAjxQgW48AAI8UINbPAAFQVCDW0EABUFQhUlBAAdBUIFuQQACQVCDW0EAgXVBUIFuQQACQVCB"+
+  "bkEAAkFQgW5BAAJDUIc7QwAFPFCDWzwAgXU+UIFuPgACPlCBbj4AAj5QgW4+AAI8UINbPAAFOVCD"+
+  "WzkAiTU+UIFuPgACOlCBbjoAAjdQgW43AAI+UIFuPgACN1B3NwABOVB3OQABOlB3OgABPFB3PAAB"+
+  "PlB3PgABQFB3QAABQVCBbkEAAjVQdzUAATdQdzcAATlQdzkAATpQdzoAATxQdzwAAT5Qdz4AAT9Q"+
+  "gW4/AAIzUHczAAE1UHc1AAE3UHc3AAE5UHc5AAE6UHc6AAE8UHc8AAE+UIJkPgAEPFA7PAABOlA7"+
+  "OgABOVB3OQABMlB3MgABPlCBbj4AAj5QhzY+AINqQ1CDW0MABUNQhUlDAAdDUIFuQwACQ1CHNkMA"+
+  "CkNQg1tDAAVDUIc7QwAFQVCHO0EABUBQhztAAAU+UIVOPgACPVB3PQABO1B3OwABPVCDWz0ABT5Q"+
+  "hzY+AAo+UIc2PgCDakJQg1tCAAVCUIFuQgACQlCBbkIAAkNQg1tDAAVCUIc2QgCBekNQgW5DAAJB"+
+  "UIFuQQACQVCBbkEAAjxQgW48AAJBUIFuQQCBcj9QgW4/AAI6UIFuOgACP1CBbj8AAj5QixY+AAo+"+
+  "UIc2PgAA/y8ATVRyawAABtIA/yEBAADDRgCzB3UAswoiyRCTN1CBbjcAAjpQgW46AAI5UIFuOQAC"+
+  "PFCDWzwABT5Qg1s+AIk1OlCBbjoAAjdQgW43AAI3UHc3AAE3UHc3AAE1UIFuNQACOlCBbjoAAjxQ"+
+  "hzY8AAo+UINbPgAFPlCCZD4ABDxQdzwAATpQgW46AAI6UIFuOgACPFCCZDwABDpQdzoAATlQgW45"+
+  "AAI6UINbOgAFOVCBbjkAAjpQg1s6AAU6UIJkOgAEOVB3OQABN1CBbjcAAjdQgW43AAI3UIVONwAC"+
+  "N1CBbjcAAjlQg1s5AAU3UINbNwCBdTpQg146AAI5UIJkOQAEOlB3OgABN1CBbjcAAjlQg1s5AAU+"+
+  "UIFuPgACPFCCZzwAAT5Qdz4AATpQgW46AAI5UIFuOQACOVCDXjkAAjdQgmQ3AAQ5UHc5AAE1UIFu"+
+  "NQACN1CHNjcAmDo5UIFuOQACOVCBbjkAAjtQgW47AAI9UINbPQAFPlCDWz4ABTlQhzY5AAoyUINb"+
+  "MgCBdTpQgW46AAI6UINbOgAFOlCDWzoAgXU6UIFuOgACOlCDWzoAgXU+UHc+AAE+UHc+AAE3UIFu"+
+  "NwACN1CBbjcAAjdQg1s3AAUwUINbMACBdTJQgW4yAAI3UIJkNwAEN1B3NwABOVCHNjkAg2oyUINb"+
+  "MgAFN1CHNjcACjVQg1s1AAU1UIFuNQACOlCBbjoAAjNQgmQzAAQzUHczAAE3UINbNwAFMlCDWzIA"+
+  "BTJQgW4yAAI5UINeOQACN1CBbjcAAjdQgW43AAI5UINeOQACPFCBbjwAAjpQg1s6AAU3UIFuNwAC"+
+  "N1CBbjcAAjlQg1s5AAU5UIFuOQACOVCBbjkAAjlQg1s5AIF1OVCBbjkAAjpQgW46AAI+UIFuPgAC"+
+  "PFCBbjwAAjpQgW46AAI8UINbPAAFNVCDWzUAjwU5UINbOQAFOVCBbjkAAj5QgW4+AAI6UINbOgAF"+
+  "OlCFSToABzVQgmc1AAE3UHc3AAE5UHc5AAE6UHc6AAE8UIJkPAAEOlB3OgABOVCBbjkAAjdQgW43"+
+  "AAI5UINbOQAFN1CHNjcACj5QgW4+AAI+UIFuPgACP1CCZD8ABD5Qdz4AATpQgW46AAI+UIFuPgAC"+
+  "N1B3NwABOVB3OQABOlCDXjoAAjlQdzkAATdQdzcAATlQg1s5AAU6UINbOgCMHTVQdzUAATVQdzUA"+
+  "ATVQdzUAATdQg1s3AAU3UIFuNwACN1CBbjcAAjlQgmQ5AAQ5UHc5AAE6UIVJOgAHOlCBbjoAAjlQ"+
+  "gmQ5AAQ3UHc3AAE1UIFuNQACNVCBbjUAAjxQg1s8AAU5UINbOQAFPFCDWzwAgXU8UIFuPAACN1CC"+
+  "ZDcABDlQdzkAATpQgW46AAI6UIFuOgACOVCFSTkABzlQgW45AAIyUINbMgCBdTlQgW45AAI+UHc+"+
+  "AAE+UHc+AAE+UHc+AAE+UHc+AAE8UIFuPAACPFCBbjwAAjdQg1s3AAU1UHc1AAE1UHc1AAE1UHc1"+
+  "AAE1UHc1AAE5UIFuOQACPFCBbjwAAj5QgW4+AAI6UIFuOgACPFCFSTwABzxQgW48AAI6UIc2OgCB"+
+  "ejpQgW46AAI6UIFuOgACOlCBbjoAAjxQhzY8AAo6UIc2OgCBejxQgW48AAI8UIFuPAACPFCBbjwA"+
+  "Aj9Qg1s/AAU+UIFuPgACPFCBbjwAAj5Qg1s+AIF1PlCBbj4AAjpQgW46AAI+UIFuPgACN1B3NwAB"+
+  "OVB3OQABOlB3OgABPFB3PAABPlB3PgABQFB3QAABQVCBbkEAAjVQdzUAATdQdzcAATlQdzkAATpQ"+
+  "dzoAATxQdzwAAT5Qdz4AAT9QgW4/AAIzUHczAAE1UHc1AAE3UHc3AAE5UHc5AAE6UHc6AAE8UHc8"+
+  "AAE+UIJkPgAEPFA7PAABOlA7OgABOVCBbjkAAjdQhUk3AAc+UIFuPgACPlCBbj4AAj5QgW4+AAI/"+
+  "UINbPwAFPlCDWz4ABTdQg1s3AAU3UIFuNwACN1CBbjcAAjxQg1s8AAU3UIc2NwAKPlCHNj4ACjxQ"+
+  "hzY8AAo6UIc2OgAKOVCHNjkACjJQhzYyAIsqMlCDWzIABTJQgW4yAAIyUIFuMgACN1CDWzcABTJQ"+
+  "g1syAIF1PlCBbj4AAjpQgW46AAI+UIFuPgACMlB3MgABNFB3NAABNVB3NQABN1B3NwABOVB3OQAB"+
+  "OlB3OgABPFCBbjwAAjBQdzAAATJQdzIAATNQdzMAATVQdzUAATdQdzcAATlQdzkAATpQdzoAATxQ"+
+  "dzwAAT5QgW4+AAIyUIJnMgABNFB3NAABNlB3NgABN1B3NwABOVCDWzkABTdQhzY3AAD/LwBNVHJr"+
+  "AAAE6AD/IQEAAMRFALQHdgC0ClrHIJQ3UINbNwAFN1CBbjcAAjVQgW41AAIzUINbMwAFMlCDWzIA"+
+  "gXUwUIFuMAACN1CBbjcAAjdQdzcAATdQdzcAATpQg1s6AAUzUIFuMwACM1CBbjMAAi5QgW4uAAIu"+
+  "UHcuAAEuUHcuAAE1UINbNQAFMFCDWzAABTdQg1s3AAUyUINbMgAFN1CCZDcABDVQdzUAATNQgW4z"+
+  "AAIzUIFuMwACNVCHNjUACi5QhzYuAAozUIJkMwAEMlB3MgABMFCFTjAAAitQACtQgW4rAAArAAIy"+
+  "UINbMgAFK1CFSSsABzdQg143AAI1UIJkNQAEN1B3NwABM1CBbjMAAjJQg1syAIk1NVCDXjUAAjRQ"+
+  "gmQ0AAQ1UHc1AAEyUIFuMgACMFCDWzAABTBQgW4wAAIwUIFuMAACMFCBbjAAAjVQdzUAATVQdzUA"+
+  "ATNQg1szAAUzUINbMwCBdTdQdzcAATdQdzcAATRQgW40AAI1UHc1AAE1UHc1AAEwUINbMAAFKVCH"+
+  "NikAkHouUIFuLgACLlCDWy4ABS5Qg1suAIF1LlCBbi4AAi5Qg1suAIF1LlB3LgABLlB3LgABK1CB"+
+  "bisAAitQgW4rAAIwUINbMAAFMFCDWzAABS1Qg1stAAUrUIVJKwAHK1CBbisAAjJQjnYyAJwaMlCD"+
+  "XjIAAi9QgW4vAAIwUIJkMAAELlB3LgABLVCDWy0ABStQg1srAAUrUINbKwAFMlCDWzIABS1QhUkt"+
+  "AActUIFuLQACLVCDWy0AjRU1UIFuNQACN1CBbjcAAjpQgW46AAI5UIFuOQACN1CBbjcAAjlQg1s5"+
+  "AAUyUIc2MgCBejJQgW4yAAIyUIFuMgACN1CBbjcAAjNQg1szAAUuUINbLgCBdTVQg1s1AAUwUIFu"+
+  "MAACMlCHNjIACitQg1srAAU3UIFuNwACN1CBbjcAAjpQgmQ6AAQ5UHc5AAE3UIVONwACMlCBbjIA"+
+  "AjNQgW4zAAI3UIFuNwACNVCHNjUAjCIwUHcwAAEwUHcwAAEwUHcwAAEyUIFuMgACMlCBbjIAAjNQ"+
+  "hU4zAAIzUIFuMwACMlCDWzIAg2U3UINbNwAFNVCCZDUABDRQdzQAATJQgW4yAAIuUIFuLgACMFCF"+
+  "STAABzBQgW4wAAIwUIc2MACSajJQg1syAAUvUHcvAAEvUHcvAAEvUHcvAAEvUHcvAAEwUIVOMAAC"+
+  "MFCBbjAAAi1QhzstAAUuUINbLgAFNVCDWzUABTVQg1s1AAUuUI52LgCJOjdQgW43AAI3UIFuNwAC"+
+  "N1CBbjcAAjlQhzY5AAo3UIsbNwCDZTdQhzY3AAo1UIc2NQAKM1CHNjMACjJQhzYyAAorUINbKwAF"+
+  "N1CDWzcABTdQgW43AAI3UIFuNwACMFCDWzAABTdQhzY3ALBqMlCDWzIABTJQgW4yAAIyUIFuMgAC"+
+  "N1CDWzcABTJQhzYyAIk6OVCBbjkAAjZQgW42AAIyUIFuMgACN1CBbjcAAitQdysAAS1Qdy0AAS5Q"+
+  "dy4AATBQdzAAATJQdzIAATRQdzQAATVQgW41AAIpUHcpAAErUHcrAAEtUHctAAEuUHcuAAEwUHcw"+
+  "AAEyUHcyAAEzUIJkMwAEMlA7MgABMFA7MAABLlCCZC4ABC1QOy0AAStQOysAATJQhzYyAAorUIc2"+
+  "KwAA/y8A";
+
+// ── MIDI — Schütz, 3.6 min, 5 vozes, parser nativo Web Audio ──────
+const MIDI_VOL=0.25;   // volume relativo ao ambient (ajustável)
+let _midiNotes=null,_midiDur=0;
+
+function parseMidi(b64){
+  const raw=atob(b64),d=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++)d[i]=raw.charCodeAt(i);
+  const div=(d[12]<<8)|d[13];
+  function vl(d,p){let v=0;while(true){const b=d[p++];v=(v<<7)|(b&0x7F);if(!(b&0x80))break;}return[v,p];}
+  // Extrair tracks
+  const tracks=[];let pos=14;
+  while(pos<d.length){
+    if(d[pos]===0x4D&&d[pos+1]===0x54&&d[pos+2]===0x72&&d[pos+3]===0x6B){
+      const tl=(d[pos+4]<<24)|(d[pos+5]<<16)|(d[pos+6]<<8)|d[pos+7];
+      tracks.push(d.slice(pos+8,pos+8+tl));pos+=8+tl;
+    }else pos++;
+  }
+  // Tempo map (track 0)
+  const tmap=[[0,500000]];
+  {const t=tracks[0];let p=0,tk=0;
+   while(p<t.length){let[dl,p2]=vl(t,p);p=p2;tk+=dl;if(p>=t.length)break;
+     const b=t[p];
+     if(b===0xFF){p++;const mt=t[p++];let[ml,p3]=vl(t,p);p=p3;
+       if(mt===0x51&&ml===3)tmap.push([tk,(t[p]<<16)|(t[p+1]<<8)|t[p+2]]);
+       p+=ml;}else if(b&0x80)p++;}}
+  // Tick → segundos com mapa de tempo
+  function t2s(tk){
+    let s=0,pt=0,ptp=tmap[0][1];
+    for(let i=1;i<tmap.length;i++){const[mt,mtp]=tmap[i];
+      if(tk<=mt)break;s+=(Math.min(tk,mt)-pt)*ptp/1e6/div;pt=mt;ptp=mtp;}
+    return s+(tk-pt)*ptp/1e6/div;
+  }
+  // Extrair notas de todas as tracks musicais
+  const notes=[];
+  for(let ti=1;ti<tracks.length;ti++){
+    const t=tracks[ti];let p=0,tk=0,ls=0;const pend={};
+    while(p<t.length){
+      let[dl,p2]=vl(t,p);p=p2;tk+=dl;if(p>=t.length)break;
+      let b=t[p];
+      if(b===0xFF){p++;const mt=t[p++];let[ml,p3]=vl(t,p);p=p3+ml;}
+      else if(b===0xF0||b===0xF7){p++;let[sl,p3]=vl(t,p);p=p3+sl;}
+      else{
+        if(b&0x80){ls=b;p++;}else b=ls;
+        const cmd=b&0xF0,ch=b&0x0F;
+        if(cmd===0x90){
+          const pitch=t[p],vel=t[p+1];p+=2;const k=(ch<<7)|pitch;
+          if(vel>0)pend[k]=[tk,vel];
+          else if(pend[k]){const[st,v]=pend[k];delete pend[k];
+            notes.push([t2s(st),440*2**((pitch-69)/12),Math.max(0.05,t2s(tk)-t2s(st)),v/127]);}
+        }else if(cmd===0x80){
+          const pitch=t[p];p+=2;const k=(ch<<7)|pitch;
+          if(pend[k]){const[st,v]=pend[k];delete pend[k];
+            notes.push([t2s(st),440*2**((pitch-69)/12),Math.max(0.05,t2s(tk)-t2s(st)),v/127]);}
+        }else if(cmd===0xA0||cmd===0xB0||cmd===0xE0)p+=2;
+        else if(cmd===0xC0||cmd===0xD0)p+=1;
+      }
+    }
+  }
+  return notes.sort((a,b)=>a[0]-b[0]);
+}
+
+function startMidi(){
+  if(!AC||!_midiNotes)return;
+  const now=AC.currentTime;
+  _midiNotes.forEach(([t,freq,dur,vel])=>{
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.type='triangle';o.frequency.value=freq;
+    g.gain.setValueAtTime(0,now+t);
+    g.gain.linearRampToValueAtTime(vel*MIDI_VOL,now+t+0.04);
+    g.gain.setValueAtTime(vel*MIDI_VOL,now+t+dur*0.85);
+    g.gain.linearRampToValueAtTime(0,now+t+dur);
+    o.connect(g);g.connect(revIn);
+    o.start(now+t);o.stop(now+t+dur+0.06);
+  });
+  setTimeout(startMidi,(_midiDur+1.5)*1000);
+}
+
+// ── ÁUDIO ──────────────────────────────────────────────────────────
+let AC=null,revIn=null;
+function initAudio(){
+  if(AC)return;
+  try{
+    AC=new(window.AudioContext||window.webkitAudioContext)();
+    if(AC.state==='suspended')AC.resume();
+    setupReverb();setTimeout(startAmbient,900);
+    if(!_midiNotes){_midiNotes=parseMidi(MIDI_B64);_midiDur=_midiNotes.reduce((mx,[t,,d])=>Math.max(mx,t+d),0);}
+    setTimeout(startMidi,600);
+  }catch(e){AC=null;}
+}
+function setupReverb(){
+  if(!AC||revIn)return;
+  const wet=AC.createGain();wet.gain.value=.22;wet.connect(AC.destination);
+  revIn=AC.createGain();revIn.gain.value=1;
+  [.071,.093,.119].forEach((d,i)=>{
+    const dl=AC.createDelay(.5),fb=AC.createGain();
+    dl.delayTime.value=d;fb.gain.value=.18-.02*i;
+    revIn.connect(dl);dl.connect(fb);fb.connect(dl);dl.connect(wet);
+  });
+}
+function fm(cFreq,mRatio,idx,delay,dur,vol,noRev){
+  if(!AC)return;
+  const t=AC.currentTime+delay;
+  const c=AC.createOscillator(),m=AC.createOscillator();
+  const mG=AC.createGain(),env=AC.createGain();
+  c.type=m.type='sine';
+  c.frequency.value=cFreq;m.frequency.value=cFreq*mRatio;mG.gain.value=cFreq*idx;
+  m.connect(mG);mG.connect(c.frequency);c.connect(env);
+  env.connect(AC.destination);
+  if(!noRev&&revIn)env.connect(revIn);
+  env.gain.setValueAtTime(0,t);
+  env.gain.linearRampToValueAtTime(vol,t+.015);
+  env.gain.exponentialRampToValueAtTime(vol*.7,t+.08);
+  env.gain.setValueAtTime(vol*.7,t+Math.max(dur-.12,t+.09));
+  env.gain.linearRampToValueAtTime(.0001,t+dur);
+  m.start(t);c.start(t);m.stop(t+dur+.02);c.stop(t+dur+.02);
+}
+function warm(freq,delay,dur,vol){
+  if(!AC)return;
+  const t=AC.currentTime+delay;
+  const o=AC.createOscillator(),lfo=AC.createOscillator();
+  const lG=AC.createGain(),env=AC.createGain();
+  o.type='triangle';lfo.frequency.value=4.5;lG.gain.value=freq*.006;
+  lfo.connect(lG);lG.connect(o.frequency);o.frequency.value=freq;
+  o.connect(env);env.connect(AC.destination);if(revIn)env.connect(revIn);
+  env.gain.setValueAtTime(0,t);
+  env.gain.linearRampToValueAtTime(vol,t+.06);
+  env.gain.setValueAtTime(vol*.75,t+.25);
+  env.gain.setValueAtTime(vol*.75,t+Math.max(dur-.18,t+.26));
+  env.gain.linearRampToValueAtTime(.0001,t+dur);
+  lfo.start(t);o.start(t);lfo.stop(t+dur);o.stop(t+dur);
+}
+function playStep(){
+  if(!AC)return;
+  const t=AC.currentTime;
+  const o=AC.createOscillator(),env=AC.createGain();
+  o.type='sine';
+  o.frequency.setValueAtTime(140,t);
+  o.frequency.exponentialRampToValueAtTime(45,t+.06);
+  o.connect(env);env.connect(AC.destination);
+  env.gain.setValueAtTime(.12,t);
+  env.gain.exponentialRampToValueAtTime(.001,t+.09);
+  o.start(t);o.stop(t+.1);
+}
+function playSuccess(){
+  [[330,.0],[415,.13],[523,.26],[659,.4]].forEach(([f,d])=>fm(f,14,1,d,.38,.14));
+}
+function playWrong(){
+  fm(220,1.8,7,0,.4,.18);fm(196,2.0,9,.15,.42,.16);fm(165,2.2,11,.32,.5,.18);
+}
+function playFanfare(){
+  [[262,330,392,.0],[330,415,523,.22],[392,494,659,.44],[523,659,784,.66]]
+    .forEach(([a,b,c2,d])=>{
+      fm(a,1,2,d,.55,.10);fm(b,1,2,d,.55,.09);fm(c2,1,2,d,.55,.08);
+    });
+  [[523,.9],[659,.9],[784,.9]].forEach(([f,d])=>warm(f,d,2.8,.065));
+}
+// Ambient Stage 3 — Dórico em D: quatro vozes, volume audível, loop a cada 7.8s
+function startAmbient(){
+  if(!AC)return;
+  function loop(){
+    if(!AC)return;
+    // Baixo pulsante — D2 e A2 alternando (fundamento dórico)
+    [[73.4,0.00,2.0,.082],[110.0,2.05,2.0,.074],
+     [73.4,4.10,2.0,.082],[110.0,6.15,1.5,.074]].forEach(([f,d,du,v])=>fm(f,.5,1.5,d,du,v));
+    // Melodia principal — Dórico em D (D E F G A B C D)
+    [[147,0.15,0.95,.052],[165,1.10,0.85,.050],[175,1.95,0.80,.046],
+     [196,2.75,1.05,.052],[220,3.80,0.90,.050],[247,4.70,0.85,.048],
+     [261,5.55,0.95,.050],[220,6.50,0.90,.046]].forEach(([f,d,du,v])=>warm(f,d,du,v));
+    // Linha de tenor (quinta abaixo — suporte harmônico)
+    [[110,0.15,1.05,.036],[123,1.10,0.90,.034],[131,1.95,0.85,.032],
+     [147,2.75,1.10,.036],[165,3.80,0.95,.034],[185,4.70,0.90,.032],
+     [196,5.55,1.00,.034],[165,6.50,0.90,.030]].forEach(([f,d,du,v])=>warm(f,d,du,v));
+    // Altos (fm sintético — caráter de cravo frio)
+    [[294,1.00,0.50,.030],[330,2.80,0.50,.028],[392,4.60,0.55,.030],
+     [330,6.10,0.50,.028],[294,7.30,0.65,.030]].forEach(([f,d,du,v])=>fm(f,1.5,.3,d,du,v));
+    // Dron de baixo — D2 sustentado
+    fm(73.4,0,.5,0.05,7.8,.042);
+    setTimeout(loop,7900);
+  }
+  setTimeout(loop,300);
+}
+
+// ── INTRODUÇÃO ─────────────────────────────────────────────────────
+const INTRO=[
+  'Königsberg, 1781.',
+  '',
+  'A Crítica da Razão Pura',
+  'acabou de ser publicada.',
+  '',
+  'O Calvinista de Königsberg',
+  'bloqueia o corredor.',
+  '',
+  '"Você sobreviveu ao labirinto',
+  ' e à cruzada.',
+  ' Mas ainda está presa',
+  ' entre dois dogmatismos."',
+  '',
+  'O Calvinista invoca o Stand:',
+  'THE ANCIENT.',
+  '',
+  'Habilidade: CLOSE TO THE EDGE.',
+  '',
+  'Seus conceitos se cristalizam.',
+  'Toda pergunta já tem resposta.',
+  'Você está congelada à beira',
+  'do que a razão pode alcançar.',
+  '',
+  '"Descubra os limites da razão.',
+  ' E use-os como fundamento."',
+  '',
+  'Para derrotá-lo,',
+  'aprenda a crítica.',
+];
+const INTRO_TOTAL=INTRO.reduce((s,l)=>s+Math.max(1,l.length),0);
+
+// ── ESTADO ─────────────────────────────────────────────────────────
+const S={
+  scene:'menu',
+  progress:0,          // 0=Tábuas 1=Instrumentos 2=Copernicana 3=fim
+  px:15*T,py:4*T+8,face:2,pf:0,pft:0,moving:false,prevPf:-1,
+  cx:0,cy:0,
+  kantSelected:new Set(),
+  instrCompleted:[false,false,false],instrIdx:0,
+  copernCompleted:[false,false,false],copernIdx:0,
+  charAccum:0,
+  dKey:null,dPhase:null,dIdx:0,dTotal:0,dSel:0,
+  dNarrative:[],dQuestion:'',dOpts:[],
+  tabletKey:null,
+  calvinistMsg:[],calvinistT:0,
+  introIdx:0,
+  okMsg:[],okT:0,
+  goMsg:[],
+  epT:0,mf:0,
+  lastSector:-1,sectorLabel:'',sectorLabelT:0,
+  sectIITriggered:false,sectIIITriggered:false,
+  pendingEpiphany:false,
+  frame:0,lastT:0,
+};
+
+// ── INPUT ──────────────────────────────────────────────────────────
+const K={},KP={};
+window.addEventListener('keydown',e=>{
+  initAudio();
+  if(!K[e.code])KP[e.code]=true;
+  K[e.code]=true;
+  if(/^(Arrow|Space)/.test(e.code))e.preventDefault();
+});
+window.addEventListener('keyup',e=>{delete K[e.code];});
+
+// ── AUXILIARES ─────────────────────────────────────────────────────
+function tileAt(col,row){
+  if(col<0||col>=MC||row<0||row>=MR)return WALL;
+  return MAP[row][col];
+}
+function solid(t){
+  return t===WALL||t===DOOR||t===VOID||
+         t===T_TB||t===T_KT||
+         t===T_TELE||t===T_RELO||t===T_PRIS||
+         t===T_CP1||t===T_CP2||t===T_CP3||t===T_CALV;
+}
+function canGo(x,y){
+  const hw=4,hh=6,f=n=>Math.floor(n/T);
+  return!solid(tileAt(f(x-hw),f(y-hh)))&&!solid(tileAt(f(x+hw),f(y-hh)))&&
+         !solid(tileAt(f(x-hw),f(y+hh)))&&!solid(tileAt(f(x+hw),f(y+hh)));
+}
+function camSync(){
+  S.cx=Math.max(0,Math.min(MC*T-W,Math.round(S.px-W/2)));
+  S.cy=Math.max(0,Math.min(MR*T-H,Math.round(S.py-H/2)));
+}
+function nearObj(){
+  const pc=Math.floor(S.px/T),pr=Math.floor(S.py/T);
+  for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){
+    const r=pr+dr,c=pc+dc;
+    if(r<0||r>=MR||c<0||c>=MC)continue;
+    const t=MAP[r][c];
+    if(S.progress===0){
+      if(t===T_TB)return'tablet_'+r+'_'+c;
+      if(t===T_KT)return'kant_table';
+    }
+    if(S.progress===1){
+      if(t===T_TELE&&!S.instrCompleted[0])return'kant_tele';
+      if(t===T_RELO&&!S.instrCompleted[1])return'kant_relo';
+      if(t===T_PRIS&&!S.instrCompleted[2])return'kant_pris';
+    }
+    if(S.progress===2){
+      if(t===T_CP1&&!S.copernCompleted[0])return'copern_0';
+      if(t===T_CP2&&!S.copernCompleted[1])return'copern_1';
+      if(t===T_CP3&&!S.copernCompleted[2])return'copern_2';
+    }
+  }
+  return null;
+}
+
+// ── DIÁLOGO: ABRIR ─────────────────────────────────────────────────
+function openDlg(key){
+  if(key.startsWith('tablet_')){
+    const parts=key.slice(7).split('_');
+    const tk=parts[0]+'_'+parts[1];
+    const tb=KANT_TABLETS[tk];
+    if(!tb)return;
+    S.tabletKey=tk;S.dKey='tablet';
+    S.dNarrative=['[ '+tb.name+' ]',...tb.desc];
+    S.dQuestion='Marcar como Sintético a Priori?';
+    const isSel=S.kantSelected.has(tk);
+    S.dOpts=[isSel?'1. Remover marca':'1. Marcar como Sintético a Priori','2. Ignorar'];
+    S.dSel=0;
+  } else if(key==='kant_table'){
+    if(S.kantSelected.size<3){
+      S.okMsg=['Marque mais '+(3-S.kantSelected.size)+' juízo(s).','Use [E] nas tábuas de pedra.'];
+      S.okT=5.0;return;
+    }
+    const names=[...S.kantSelected].map(k=>KANT_TABLETS[k].name);
+    S.dKey='kant_table';
+    S.dNarrative=['Sua seleção:',...names.map(n=>'  '+n),'','Confirmar estes 3 juízos?'];
+    S.dQuestion='São os Sintéticos a Priori de Kant?';
+    S.dOpts=['1. Confirmar seleção','2. Cancelar'];
+    S.dSel=0;
+  } else if(key==='kant_tele'||key==='kant_relo'||key==='kant_pris'){
+    const im={'kant_tele':0,'kant_relo':1,'kant_pris':2};
+    const si=im[key];
+    const ins=KANT_INSTR[si];
+    S.instrIdx=si;S.dKey=key;
+    S.dNarrative=ins.intro;
+    S.dQuestion=ins.q;
+    S.dOpts=ins.opts;S.dSel=0;
+  } else if(key.startsWith('copern_')){
+    const si=parseInt(key.slice(7));
+    const sc=KANT_SCEN[si];
+    S.copernIdx=si;S.dKey='copern';
+    S.dNarrative=sc.sit;
+    S.dQuestion=sc.q;
+    S.dOpts=sc.opts;S.dSel=0;
+  }
+  S.dTotal=S.dNarrative.reduce((s,l)=>s+Math.max(1,l.length),0);
+  S.dIdx=0;S.dPhase='typing';S.scene='dialogue';
+}
+
+// ── DIÁLOGO: ESCOLHA ───────────────────────────────────────────────
+function pickOpt(idx){
+  if(idx>=S.dOpts.length)return;
+
+  // — Tábua —
+  if(S.dKey==='tablet'){
+    const tk=S.tabletKey;
+    if(idx===0){
+      if(S.kantSelected.has(tk)){
+        S.kantSelected.delete(tk);
+      } else {
+        if(S.kantSelected.size<3)S.kantSelected.add(tk);
+        else{S.okMsg=['Já marcou 3.','Desmarque um antes de marcar outro.'];S.okT=5.0;}
+      }
+    }
+    S.scene='playing';S.dKey=null;return;
+  }
+
+  // — Mesa de confirmação —
+  if(S.dKey==='kant_table'){
+    if(idx===0){
+      const isOk=[...S.kantSelected].every(k=>CORRECT_TABLETS.has(k))&&S.kantSelected.size===3;
+      if(isOk){
+        playSuccess();
+        S.progress=1;
+        DR1.forEach(([r,c])=>MAP[r][c]=FLOOR);
+        S.okMsg=['Juízos Sintéticos a Priori identificados!',
+                 'Necessários E informativos.',
+                 'Corredor A aberto — avance.'];
+        S.okT=8.0;
+      } else {
+        playWrong();
+        S.kantSelected=new Set();
+        S.calvinistMsg=['Ainda confunde o analítico com o sintético.',
+                        'Suas marcas foram removidas.',
+                        'Revise as tábuas.'];
+        S.calvinistT=8.0;
+        S.okMsg=['Seleção incorreta.','Tente novamente.'];S.okT=4.5;
+      }
+    }
+    S.scene='playing';S.dKey=null;return;
+  }
+
+  // — Instrumento (bloqueia no erro) —
+  if(S.dKey==='kant_tele'||S.dKey==='kant_relo'||S.dKey==='kant_pris'){
+    const ins=KANT_INSTR[S.instrIdx];
+    if(idx===ins.ok){
+      playSuccess();
+      S.instrCompleted[S.instrIdx]=true;
+      const allDone=S.instrCompleted.every(c=>c);
+      if(allDone){
+        S.progress=2;
+        DR2.forEach(([r,c])=>MAP[r][c]=FLOOR);
+        S.calvinistMsg=['...Você está reestruturando','tudo que aprendi.'];
+        S.calvinistT=7.0;
+        S.okMsg=['Observatório concluído.','Espaço e tempo: formas da intuição.','Sala da Crítica aberta.'];
+        S.okT=8.0;
+      } else {
+        const rem=3-S.instrCompleted.filter(c=>c).length;
+        S.okMsg=['Correto — '+ins.name+'.',rem+' instrumento(s) restante(s).'];S.okT=5.5;
+      }
+      S.scene='playing';
+    } else {
+      playWrong();
+      const fb=ins.fbs[idx];
+      S.calvinistMsg=fb||['Incorreto. Reflita.'];
+      S.calvinistT=9.0;
+      S.scene='playing'; // instrumento ainda disponível para retry
+    }
+    S.dKey=null;return;
+  }
+
+  // — Cenário Copernicano —
+  if(S.dKey==='copern'){
+    const sc=KANT_SCEN[S.copernIdx];
+    if(idx===sc.ok){
+      playSuccess();
+      S.copernCompleted[S.copernIdx]=true;
+      const allDone=S.copernCompleted.every(c=>c);
+      if(allDone){
+        setTimeout(playFanfare,400);
+        S.calvinistMsg=[
+          'A inversão está completa.',
+          'Não nos adaptamos ao mundo.',
+          'É o sujeito que constitui o objeto.',
+          'A razão não descreve — ela legisla.',
+          'O cogito kantiano desperta.',
+        ];
+        S.calvinistT=16.0;
+        S.okMsg=['Revolução Copernicana concluída.','Missão III encerrada.'];
+        S.okT=14.0;
+        S.progress=3;
+        S.pendingEpiphany=true;
+        S.scene='playing';
+      } else {
+        const rem=3-S.copernCompleted.filter(c=>c).length;
+        S.okMsg=['Correto — '+sc.name+'.',rem+' cenário(s) restante(s).'];S.okT=5.5;
+        S.scene='playing';
+      }
+    } else {
+      playWrong();
+      const fb=sc.fbs[idx];
+      S.calvinistMsg=fb||['Incorreto. Reflita.'];
+      S.calvinistT=8.5;
+      S.scene='playing';
+    }
+    S.dKey=null;return;
+  }
+}
+
+function respawn(){
+  if(S.progress===0){S.px=15*T;S.py=4*T+8;}
+  else if(S.progress===1){S.px=15*T;S.py=16*T+8;}
+  else{S.px=15*T;S.py=28*T+8;}
+  camSync();
+}
+
+// ── UPDATE ─────────────────────────────────────────────────────────
+function update(dt){
+  S.frame++;S.mf=(S.mf+dt)%1.4;
+  if(S.okT>0)S.okT-=dt;
+  if(S.calvinistT>0)S.calvinistT-=dt;
+  if(S.pendingEpiphany&&S.okT<=0&&S.calvinistT<=0){
+    S.pendingEpiphany=false;S.scene='epiphany';S.epT=0;
+  }
+  if(S.sectorLabelT>0)S.sectorLabelT-=dt;
+
+  if(S.scene==='menu'){
+    if(KP.Enter||KP.Space){S.scene='intro';S.introIdx=0;}
+    if(KP.Escape)location.href='../index.html';
+  }
+  else if(S.scene==='intro'){
+    S.charAccum+=dt*26;
+    const adv=~~S.charAccum;S.charAccum-=adv;
+    S.introIdx=Math.min(INTRO_TOTAL,S.introIdx+adv);
+    if(KP.Enter||KP.Space){
+      if(S.introIdx<INTRO_TOTAL)S.introIdx=INTRO_TOTAL;
+      else S.scene='playing';
+    }
+  }
+  else if(S.scene==='playing'){
+    let dx=0,dy=0;
+    if(K.ArrowLeft||K.KeyA){dx=-1;S.face=3;}
+    if(K.ArrowRight||K.KeyD){dx=1;S.face=1;}
+    if(K.ArrowUp||K.KeyW){dy=-1;S.face=0;}
+    if(K.ArrowDown||K.KeyS){dy=1;S.face=2;}
+    if(dx&&dy){dx*=.707;dy*=.707;}
+    S.moving=dx!==0||dy!==0;
+    const sp=58*dt;
+    const nx=S.px+dx*sp,ny=S.py+dy*sp;
+    if(canGo(nx,ny)){S.px=nx;S.py=ny;}
+    else if(canGo(nx,S.py))S.px=nx;
+    else if(canGo(S.px,ny))S.py=ny;
+    S.px=Math.max(8,Math.min(MC*T-8,S.px));
+    S.py=Math.max(8,Math.min(MR*T-8,S.py));
+    if(S.moving){
+      S.pft+=dt;
+      if(S.pft>.35){S.pft=0;S.pf^=1;}
+      if(S.pf!==S.prevPf){playStep();S.prevPf=S.pf;}
+    } else {S.pf=0;S.pft=0;S.prevPf=-1;}
+    camSync();
+    const pr=Math.floor(S.py/T);
+    const sec=pr<14?0:pr<26?1:2;
+    if(sec!==S.lastSector){
+      S.lastSector=sec;
+      const lb=['I — Biblioteca Crítica','II — Observatório','III — Sala da Crítica'];
+      S.sectorLabel=lb[sec];S.sectorLabelT=2.8;
+      if(sec===1&&!S.sectIITriggered&&S.progress===1){
+        S.sectIITriggered=true;
+        S.calvinistMsg=[
+          'Os juízos estão identificados.',
+          'Mas de onde eles vêm?',
+          'A geometria é Sintética a Priori',
+          'porque o espaço é a FORMA',
+          'da experiência — não seu conteúdo.',
+          'Examine esses instrumentos.',
+        ];
+        S.calvinistT=12.0;
+      }
+      if(sec===2&&!S.sectIIITriggered&&S.progress===2){
+        S.sectIIITriggered=true;
+        S.calvinistMsg=[
+          'Muito bem. Mas ainda não respondeu:',
+          'por que os objetos obedecem às leis?',
+          'Kant: é o sujeito que estrutura.',
+          'Mas isso não seria idealismo?',
+          'Vamos ver se você entende a inversão.',
+        ];
+        S.calvinistT=12.0;
+      }
+    }
+    if(KP.Enter&&(S.okT>0||S.calvinistT>0)){S.okT=0;S.calvinistT=0;}
+    else if(KP.KeyE||KP.Space||KP.Enter){const o=nearObj();if(o)openDlg(o);}
+  }
+  else if(S.scene==='dialogue'){
+    if(S.dPhase==='typing'){
+      if(KP.Space||KP.Enter){S.dIdx=S.dTotal;S.charAccum=0;}
+      else{S.charAccum+=dt*26;const adv=~~S.charAccum;S.charAccum-=adv;S.dIdx=Math.min(S.dTotal,S.dIdx+adv);}
+      if(S.dIdx>=S.dTotal){S.dPhase='waiting';S.charAccum=0;}
+    }
+    else if(S.dPhase==='waiting'){
+      if(KP.Enter||KP.Space)S.dPhase='choosing';
+    }
+    else if(S.dPhase==='choosing'){
+      if(KP.ArrowUp||KP.KeyW)S.dSel=Math.max(0,S.dSel-1);
+      if(KP.ArrowDown||KP.KeyS)S.dSel=Math.min(S.dOpts.length-1,S.dSel+1);
+      if(KP.Digit1)pickOpt(0);
+      if(KP.Digit2)pickOpt(1);
+      if(KP.Digit3)pickOpt(2);
+      if(KP.Enter||KP.Space)pickOpt(S.dSel);
+    }
+  }
+  else if(S.scene==='gameover'){
+    if(KP.Enter||KP.Space){respawn();S.scene='playing';}
+  }
+  else if(S.scene==='epiphany'){
+    S.epT+=dt;
+    if(S.epT>9.6&&(KP.Enter||KP.Space)){
+      vmComplete('stage3');
+      location.href='../final.html';
+    }
+  }
+
+  for(const k in KP)delete KP[k];
+}
+
+// ── RENDER ─────────────────────────────────────────────────────────
+function render(){
+  ctx.setTransform(2,0,0,2,0,0);
+  ctx.clearRect(0,0,W,H);
+  if(S.scene==='menu')rMenu();
+  else if(S.scene==='intro')rIntro();
+  else if(S.scene==='playing'||S.scene==='dialogue')rGame();
+  else if(S.scene==='gameover')rGameover();
+  else rEpiphany();
+}
+
+// ── MENU ───────────────────────────────────────────────────────────
+function rMenu(){
+  ctx.fillStyle='#04060e';ctx.fillRect(0,0,W,H);
+  // Grade neoclássica de fundo
+  ctx.fillStyle='#080c18';
+  for(let x=0;x<W;x+=20)ctx.fillRect(x,0,1,H);
+  for(let y=0;y<H;y+=20)ctx.fillRect(0,y,W,1);
+  const bg=ctx.createRadialGradient(W/2,H+20,5,W/2,H+20,140);
+  bg.addColorStop(0,'rgba(60,90,180,.20)');bg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#3c4868';ctx.font='3px "Press Start 2P"';
+  ctx.fillText('VENTOS MODERNOS — Capítulo 3',W/2,26);
+  ctx.fillStyle='#c0a830';ctx.font='8px "Press Start 2P"';
+  ctx.fillText('O CALVINISTA',W/2,40);ctx.fillText('DE KÖNIGSBERG',W/2,52);
+  ctx.fillStyle='#506090';ctx.font='4px "Press Start 2P"';
+  ctx.fillText('Stage 3 — Filosofia Crítica',W/2,68);
+  ctx.fillStyle='#303860';
+  for(let i=0;i<24;i++)ctx.fillRect(W/2-58+i*5,76,2,1);
+  ctx.fillStyle='#6070a0';ctx.font='3px "Press Start 2P"';
+  ctx.fillText('I. Tábuas  |  II. Instrumentos  |  III. Copernicana',W/2,88);
+  if(S.mf<.95){
+    ctx.fillStyle='#c0a830';ctx.font='5px "Press Start 2P"';
+    ctx.fillText('PRESSIONE ENTER',W/2,116);
+  }
+  ctx.fillStyle='#405070';ctx.font='3px "Press Start 2P"';
+  ctx.fillText('Série: Ventos Modernos — Capítulo 3',W/2,146);
+  ctx.fillText('WASD · E interagir · 1 2 3 responder',W/2,156);
+  ctx.fillText('Immanuel Kant  •  1781  •  Königsberg',W/2,166);
+  ctx.fillStyle='#28304a';ctx.font='3px "Press Start 2P"';
+  ctx.fillText('ESC volta ao hub',W/2,174);
+  ctx.textAlign='left';
+}
+
+// ── INTRO ──────────────────────────────────────────────────────────
+function rIntro(){
+  ctx.fillStyle='#04060e';ctx.fillRect(0,0,W,H);
+  const vg=ctx.createRadialGradient(W/2,H/2,40,W/2,H/2,W*.7);
+  vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,'rgba(0,0,0,.5)');
+  ctx.fillStyle=vg;ctx.fillRect(0,0,W,H);
+  const bX=18,bY=18,bW=W-36,bH=H-36;
+  ctx.fillStyle='rgba(5,8,20,.94)';ctx.fillRect(bX,bY,bW,bH);
+  ctx.strokeStyle='#5070a0';ctx.lineWidth=1;ctx.strokeRect(bX,bY,bW,bH);
+  ctx.strokeStyle='#2a3860';ctx.strokeRect(bX+1,bY+1,bW-2,bH-2);
+  ctx.fillStyle='#6080c0';
+  [[bX,bY],[bX+bW-3,bY],[bX,bY+bH-3],[bX+bW-3,bY+bH-3]]
+    .forEach(([x,y])=>ctx.fillRect(x,y,3,3));
+  ctx.fillStyle='#5070a0';ctx.font='3px "Press Start 2P"';
+  ctx.textAlign='center';ctx.fillText('— Stage 3 —',W/2,bY+8);ctx.textAlign='left';
+  ctx.fillStyle='#c0d0e8';ctx.font='4px "Press Start 2P"';
+  let rem=S.introIdx,ly=bY+18;
+  for(const line of INTRO){
+    if(rem<=0)break;
+    if(line===''){rem-=1;ly+=6;continue;}
+    ctx.fillText(line.substring(0,Math.min(rem,line.length)),bX+8,ly);
+    rem-=line.length;ly+=9;
+    if(ly>bY+bH-18)break;
+  }
+  if(S.introIdx>=INTRO_TOTAL){
+    if(S.frame%30<20){
+      ctx.fillStyle='#c0a830';ctx.font='4px "Press Start 2P"';
+      ctx.textAlign='center';ctx.fillText('ENTER para continuar',W/2,bY+bH-10);ctx.textAlign='left';
+    }
+  } else {
+    ctx.fillStyle='#2a3860';ctx.font='3px "Press Start 2P"';
+    ctx.textAlign='right';ctx.fillText('[ESPACO p/ pular]',W-bX-4,bY+bH-6);ctx.textAlign='left';
+  }
+}
+
+// ── JOGO ───────────────────────────────────────────────────────────
+function rGame(){
+  ctx.fillStyle='#0e1018';ctx.fillRect(0,0,W,H);
+  rTiles();rPlayer();rLight();
+  if(S.okT>0)rOkMsg();
+  if(S.calvinistT>0)rCalvinista();
+  if(S.scene==='playing')rHint();
+  rSectorLabel();
+  if(S.scene==='dialogue')rDlg();
+}
+
+// ── TILES ──────────────────────────────────────────────────────────
+function rTiles(){
+  const cx=S.cx,cy=S.cy;
+  const c0=Math.max(0,~~(cx/T)),c1=Math.min(MC,~~((cx+W)/T)+2);
+  const r0=Math.max(0,~~(cy/T)),r1=Math.min(MR,~~((cy+H)/T)+2);
+  for(let r=r0;r<r1;r++)for(let c=c0;c<c1;c++)
+    drawTile(c*T-cx,r*T-cy,MAP[r][c],c,r);
+}
+function drawTile(sx,sy,tp,c,r){
+  const n=S.frame;
+  switch(tp){
+    case VOID:
+      ctx.fillStyle='#030408';ctx.fillRect(sx,sy,T,T);break;
+    case FLOOR:
+      drawSpr(FL_TILE,TPAL,sx,sy,1);break;
+    case WALL:
+      drawSpr(WL_TILE,TPAL,sx,sy,1);break;
+    case DOOR:
+      drawSpr(DR_TILE,TPAL,sx,sy,1);break;
+    case T_TB:{
+      const tk=r+'_'+c;
+      const isSel=S.kantSelected.has(tk);
+      drawSpr(TB_TILE,TPAL,sx,sy,1);
+      if(isSel){
+        const gv=.65+Math.sin(n*.09)*.35;
+        ctx.fillStyle=`rgba(192,168,48,${gv*.35})`;ctx.fillRect(sx+2,sy+2,T-4,T-4);
+        ctx.fillStyle=`rgba(192,168,48,${gv})`;
+        ctx.fillRect(sx+4,sy+3,8,1);ctx.fillRect(sx+4,sy+6,8,1);ctx.fillRect(sx+4,sy+9,6,1);
+        ctx.fillRect(sx+5,sy+4,2,2);ctx.fillRect(sx+9,sy+7,2,2);
+      }
+      break;
+    }
+    case T_KT:{
+      drawSpr(KT_TILE,TPAL,sx,sy,1);
+      if(S.kantSelected.size===3&&S.progress===0){
+        const gv=.55+Math.sin(n*.1)*.45;
+        ctx.fillStyle=`rgba(192,168,48,${gv*.5})`;ctx.fillRect(sx,sy,T,T);
+        ctx.fillStyle=`rgba(192,168,48,${gv})`;
+        ctx.fillRect(sx,sy,T,1);ctx.fillRect(sx,sy+T-1,T,1);
+        ctx.fillRect(sx,sy,1,T);ctx.fillRect(sx+T-1,sy,1,T);
+      }
+      break;
+    }
+    case T_TELE:{
+      drawSpr(FL_TILE,TPAL,sx,sy,1);drawSpr(TELE_TILE,TPAL,sx,sy,1);
+      const gl=.5+Math.sin(n*.12)*.5;
+      ctx.fillStyle=`rgba(160,200,255,${gl*.85})`;ctx.fillRect(sx+11,sy+3,2,1);
+      if(!S.instrCompleted[0]&&S.progress===1){
+        ctx.fillStyle=`rgba(80,130,220,${.14+Math.sin(n*.07)*.09})`;
+        ctx.fillRect(sx+1,sy+1,T-2,T-4);
+      }
+      break;
+    }
+    case T_RELO:{
+      drawSpr(FL_TILE,TPAL,sx,sy,1);drawSpr(RELO_TILE,TPAL,sx,sy,1);
+      if(!S.instrCompleted[1]&&S.progress===1){
+        ctx.fillStyle=`rgba(110,90,210,${.14+Math.sin(n*.07+1)*.09})`;
+        ctx.fillRect(sx+2,sy+1,T-4,T-4);
+      }
+      break;
+    }
+    case T_PRIS:{
+      drawSpr(FL_TILE,TPAL,sx,sy,1);drawSpr(PRIS_TILE,TPAL,sx,sy,1);
+      const t2=n*.06;
+      ctx.fillStyle=`rgba(80,160,255,${.55+Math.sin(t2)*.3})`;ctx.fillRect(sx+13,sy+4,2,1);
+      ctx.fillStyle=`rgba(160,80,255,${.45+Math.sin(t2+1)*.3})`;ctx.fillRect(sx+13,sy+6,2,1);
+      ctx.fillStyle=`rgba(80,220,200,${.40+Math.sin(t2+2)*.3})`;ctx.fillRect(sx+13,sy+8,2,1);
+      if(!S.instrCompleted[2]&&S.progress===1){
+        ctx.fillStyle=`rgba(60,140,200,${.14+Math.sin(n*.07+2)*.09})`;
+        ctx.fillRect(sx+1,sy+1,T-2,T-5);
+      }
+      break;
+    }
+    case T_CP1:{
+      drawSpr(FL_TILE,TPAL,sx,sy,1);drawSpr(CP1_TILE,TPAL,sx,sy,1);
+      const gv=.55+Math.sin(n*.09)*.45;
+      ctx.fillStyle=`rgba(200,160,40,${gv})`;ctx.fillRect(sx+7,sy+5,2,2);
+      if(!S.copernCompleted[0]&&S.progress===2){
+        ctx.fillStyle=`rgba(120,90,200,${.16+Math.sin(n*.07)*.09})`;
+        ctx.fillRect(sx+1,sy+1,T-2,T-5);
+      }
+      break;
+    }
+    case T_CP2:{
+      drawSpr(FL_TILE,TPAL,sx,sy,1);drawSpr(CP2_TILE,TPAL,sx,sy,1);
+      const gv2=.55+Math.sin(n*.1)*.45;
+      ctx.fillStyle=`rgba(192,168,48,${gv2})`;ctx.fillRect(sx+7,sy+5,2,2);
+      if(!S.copernCompleted[1]&&S.progress===2){
+        ctx.fillStyle=`rgba(60,110,210,${.16+Math.sin(n*.07+1)*.09})`;
+        ctx.fillRect(sx+1,sy+1,T-2,T-5);
+      }
+      break;
+    }
+    case T_CP3:{
+      drawSpr(FL_TILE,TPAL,sx,sy,1);drawSpr(CP3_TILE,TPAL,sx,sy,1);
+      const ph=n*.07;
+      ctx.fillStyle=`rgba(50,70,140,${.28+Math.sin(ph)*.18})`;
+      ctx.fillRect(sx+9,sy+3,5,5);
+      if(!S.copernCompleted[2]&&S.progress===2){
+        ctx.fillStyle=`rgba(90,70,200,${.16+Math.sin(n*.07+2)*.09})`;
+        ctx.fillRect(sx+1,sy+1,T-2,T-5);
+      }
+      break;
+    }
+    case T_CALV:{
+      drawSpr(FL_TILE,TPAL,sx,sy,1);drawSpr(CALV_TILE,TPAL,sx,sy,1);
+      const av=.26+Math.sin(n*.05)*.16;
+      ctx.fillStyle=`rgba(70,100,200,${av*.45})`;ctx.fillRect(sx+1,sy+1,T-2,T-2);
+      ctx.fillStyle=`rgba(70,100,200,${av})`;
+      ctx.fillRect(sx+1,sy,T-2,1);ctx.fillRect(sx+1,sy+T-1,T-2,1);
+      ctx.fillRect(sx,sy+1,1,T-2);ctx.fillRect(sx+T-1,sy+1,1,T-2);
+      break;
+    }
+  }
+}
+
+function drawSpr(rows,pal,x,y,sc,fl){
+  const W=rows[0].length;
+  rows.forEach((row,j)=>[...row].forEach((ch,i)=>{
+    if(!pal[ch])return;
+    ctx.fillStyle=pal[ch];
+    ctx.fillRect(x+(fl?W-1-i:i)*sc,y+j*sc,sc,sc);
+  }));
+}
+
+// ── A APRENDIZ — 16×24 px · longilínea · 4 direções ──────────────
+function rPlayer(){
+  const sx=~~(S.px-S.cx),sy=~~(S.py-S.cy);
+  let rows,fl=false;
+  if(S.face===0)rows=S.pf?PB1:PB0;
+  else if(S.face===2)rows=S.pf?PF1:PF0;
+  else{rows=S.pf?PS1:PS0;if(S.face===3)fl=true;}
+  ctx.fillStyle='rgba(0,0,0,.22)';
+  ctx.fillRect(sx-6,sy,13,2);ctx.fillRect(sx-5,sy+1,11,1);
+  drawSpr(rows,PPAL,sx-8,sy-23,1,fl);
+  if(S.progress===3||S.scene==='epiphany'){
+    ctx.fillStyle='rgba(200,160,40,.70)';
+    [
+      [sx+~~(Math.sin(S.frame*.08)*7),sy-6+~~(Math.cos(S.frame*.10)*4)],
+      [sx-4+~~(Math.sin(S.frame*.12+1)*5),sy-13+~~(Math.cos(S.frame*.07+2)*3)],
+      [sx+6+~~(Math.sin(S.frame*.06+3)*4),sy-3+~~(Math.cos(S.frame*.09+1)*4)],
+      [sx-1+~~(Math.sin(S.frame*.10+4)*5),sy+2+~~(Math.cos(S.frame*.11+3)*3)],
+    ].forEach(([px,py])=>ctx.fillRect(px,py,1,1));
+  }
+}
+
+
+// ── ILUMINAÇÃO ─────────────────────────────────────────────────────
+function rLight(){
+  lx.setTransform(2,0,0,2,0,0);
+  lx.clearRect(0,0,W,H);
+  lx.fillStyle='rgba(0,0,0,.38)';lx.fillRect(0,0,W,H);
+  lx.globalCompositeOperation='destination-out';
+  const px=~~(S.px-S.cx),py=~~(S.py-S.cy);
+  // Luz da personagem — azul-fria (razão crítica, não torcha âmbar)
+  const g=lx.createRadialGradient(px,py-4,2,px,py-4,80);
+  g.addColorStop(0,'rgba(215,230,255,1)');
+  g.addColorStop(.30,'rgba(145,175,255,.70)');
+  g.addColorStop(.65,'rgba(75,105,200,.26)');
+  g.addColorStop(1,'rgba(0,0,0,0)');
+  lx.fillStyle=g;lx.beginPath();lx.arc(px,py-4,80,0,Math.PI*2);lx.fill();
+  // Setor I: tábuas marcadas → dourado; mesa pulsa se 3 marcadas
+  if(S.progress===0){
+    for(const tk of S.kantSelected){
+      const[rr,cc]=tk.split('_').map(Number);
+      addGlowAt(cc*T+8-S.cx,rr*T+8-S.cy,16,200,160,40);
+    }
+    if(S.kantSelected.size===3)addGlowAt(24*T+8-S.cx,5*T+8-S.cy,22,200,160,40);
+  }
+  // Setor II: instrumentos incompletos → brilhos frios
+  if(S.progress===1){
+    if(!S.instrCompleted[0])addGlowAt(5*T+8-S.cx,16*T+8-S.cy,18,70,120,225);
+    if(!S.instrCompleted[1])addGlowAt(15*T+8-S.cx,18*T+8-S.cy,18,130,155,210);
+    if(!S.instrCompleted[2])addGlowAt(23*T+8-S.cx,20*T+8-S.cy,18,110,75,225);
+  }
+  // Setor III: aura do Calvinista + cenários
+  if(S.progress===2){
+    addGlowAt(16*T+8-S.cx,27*T+8-S.cy,30,55,75,180);
+    if(!S.copernCompleted[0])addGlowAt(6*T+8-S.cx,30*T+8-S.cy,18,130,85,210);
+    if(!S.copernCompleted[1])addGlowAt(14*T+8-S.cx,30*T+8-S.cy,18,75,110,220);
+    if(!S.copernCompleted[2])addGlowAt(22*T+8-S.cx,30*T+8-S.cy,18,100,70,200);
+  }
+  lx.globalCompositeOperation='source-over';
+  ctx.drawImage(lc,0,0,W,H);
+}
+function addGlowAt(ox,oy,rad,cr,cg,cb){
+  if(ox<-50||ox>W+50||oy<-50||oy>H+50)return;
+  const fl=.92+Math.sin(S.frame*.18)*.08,r=rad*fl;
+  const g=lx.createRadialGradient(ox,oy,0,ox,oy,r);
+  g.addColorStop(0,`rgba(${cr},${cg},${cb},.72)`);g.addColorStop(1,'rgba(0,0,0,0)');
+  lx.fillStyle=g;lx.beginPath();lx.arc(ox,oy,r,0,Math.PI*2);lx.fill();
+}
+
+// ── DICA ───────────────────────────────────────────────────────────
+function rHint(){
+  const o=nearObj();
+  if(!o||S.frame%30>=20)return;
+  const px=~~(S.px-S.cx),py=~~(S.py-S.cy);
+  ctx.textAlign='center';ctx.fillStyle='#c0a830';ctx.font='4px "Press Start 2P"';
+  let hint='[E]';
+  if(o==='kant_table')hint=S.kantSelected.size===3?'[E] Confirmar':'[E] '+S.kantSelected.size+'/3';
+  if(o.startsWith('copern_'))hint='[E] Cenário '+(parseInt(o.slice(7))+1);
+  ctx.fillText(hint,px,py-16);ctx.textAlign='left';
+}
+
+// ── RÓTULO DE SETOR ────────────────────────────────────────────────
+function rSectorLabel(){
+  if(S.sectorLabelT<=0)return;
+  const t=S.sectorLabelT;
+  const a=Math.min(1,t*3)*Math.min(1,t);
+  ctx.save();ctx.globalAlpha=a;
+  ctx.fillStyle='rgba(5,8,20,.88)';ctx.fillRect(W/2-96,13,192,14);
+  ctx.strokeStyle='rgba(80,120,200,.55)';ctx.lineWidth=1;ctx.strokeRect(W/2-96,13,192,14);
+  ctx.fillStyle='#c0d0e8';ctx.font='4px "Press Start 2P"';ctx.textAlign='center';
+  ctx.fillText(S.sectorLabel,W/2,22);ctx.textAlign='left';ctx.restore();
+}
+
+// ── OVERLAY DO CALVINISTA ──────────────────────────────────────────
+function rCalvinista(){
+  if(S.calvinistT<=0||!S.calvinistMsg.length)return;
+  const a=Math.min(1,S.calvinistT*2.5);
+  ctx.save();ctx.globalAlpha=a;
+  const bH=S.calvinistMsg.length*11+30,bW=224;
+  const bx=W/2-bW/2,by=14;
+  ctx.fillStyle='rgba(4,6,18,.97)';ctx.fillRect(bx,by,bW,bH);
+  ctx.strokeStyle='#4060a0';ctx.lineWidth=1;ctx.strokeRect(bx,by,bW,bH);
+  ctx.fillStyle='#6070b0';ctx.font='3px "Press Start 2P"';
+  ctx.textAlign='center';ctx.fillText('O CALVINISTA DE KÖNIGSBERG:',W/2,by+9);
+  ctx.fillStyle='#b0c0d8';ctx.font='4px "Press Start 2P"';
+  S.calvinistMsg.forEach((l,i)=>ctx.fillText(l,W/2,by+19+i*11));
+  ctx.fillStyle='rgba(60,80,140,.65)';ctx.font='3px "Press Start 2P"';
+  ctx.fillText('[ENTER] dispensar',W/2,by+bH-6);
+  ctx.textAlign='left';ctx.restore();
+}
+
+// ── OK MESSAGE ─────────────────────────────────────────────────────
+function rOkMsg(){
+  const a=Math.min(1,S.okT*2.5);
+  ctx.save();ctx.globalAlpha=a;
+  const bW=220,bH=S.okMsg.length*12+26;
+  const bx=W/2-bW/2,by=H/2-bH/2;
+  ctx.fillStyle='rgba(4,6,18,.97)';ctx.fillRect(bx,by,bW,bH);
+  ctx.strokeStyle='#5070a0';ctx.lineWidth=1;ctx.strokeRect(bx,by,bW,bH);
+  ctx.fillStyle='#c0d0e8';ctx.font='4px "Press Start 2P"';ctx.textAlign='center';
+  S.okMsg.forEach((l,i)=>ctx.fillText(l,W/2,by+13+i*11));
+  ctx.fillStyle='rgba(60,80,140,.65)';ctx.font='3px "Press Start 2P"';
+  ctx.fillText('[ENTER] dispensar',W/2,by+bH-6);
+  ctx.textAlign='left';ctx.restore();
+}
+
+// ── DIÁLOGO ────────────────────────────────────────────────────────
+function rDlg(){
+  const bH=92,bY=H-bH-2,pX=7,lH=9;
+  ctx.fillStyle='rgba(4,6,18,.98)';ctx.fillRect(2,bY,W-4,bH);
+  ctx.strokeStyle='#4060a0';ctx.lineWidth=1;ctx.strokeRect(2,bY,W-4,bH);
+  ctx.strokeStyle='#20304a';ctx.strokeRect(3,bY+1,W-6,bH-2);
+  ctx.fillStyle='#5070a8';
+  [[2,bY],[W-5,bY],[2,bY+bH-3],[W-5,bY+bH-3]].forEach(([x,y])=>ctx.fillRect(x,y,3,3));
+  const hdrs={
+    tablet:'Biblioteca Crítica',
+    kant_table:'Mesa de Kant',
+    kant_tele:'Observatório — Telescópio',
+    kant_relo:'Observatório — Relógio',
+    kant_pris:'Observatório — Prisma',
+    copern:'Sala da Crítica — Cenário '+['I','II','III'][S.copernIdx],
+  };
+  ctx.fillStyle='#5070a8';ctx.font='3px "Press Start 2P"';
+  ctx.textAlign='right';ctx.fillText(hdrs[S.dKey]||'',W-8,bY+7);ctx.textAlign='left';
+  ctx.fillStyle='#20304a';ctx.fillRect(2,bY+9,W-4,1);
+  ctx.font='4px "Press Start 2P"';
+
+  if(S.dPhase==='typing'||S.dPhase==='waiting'){
+    ctx.fillStyle='#c0d0e8';
+    let rem=S.dPhase==='waiting'?999999:S.dIdx,ly=bY+pX+8;
+    for(const line of S.dNarrative){
+      if(rem<=0)break;
+      if(line===''){rem-=1;ly+=5;continue;}
+      ctx.fillText(line.substring(0,Math.min(rem,line.length)),pX+2,ly);
+      rem-=line.length;ly+=lH;
+      if(ly>bY+bH-16)break;
+    }
+    if(S.dPhase==='waiting'){
+      if(S.frame%28<16){
+        ctx.fillStyle='#c0a830';ctx.textAlign='center';
+        ctx.fillText('[ ENTER para responder ]',W/2,bY+bH-6);
+        ctx.textAlign='left';
+      }
+    } else {
+      ctx.fillStyle='#203048';ctx.font='3px "Press Start 2P"';
+      ctx.textAlign='right';ctx.fillText('[ESPACO p/ pular]',W-7,bY+bH-6);ctx.textAlign='left';
+    }
+  }
+  else if(S.dPhase==='choosing'){
+    ctx.fillStyle='#c0a830';ctx.font='4px "Press Start 2P"';
+    ctx.fillText(S.dQuestion,pX+2,bY+pX+8);
+    ctx.fillStyle='#203048';ctx.fillRect(pX,bY+pX+11,W-pX*2-4,1);
+    S.dOpts.forEach((opt,i)=>{
+      const ly=bY+pX+20+i*18;const sel=i===S.dSel;
+      if(sel){ctx.fillStyle='#1a2848';ctx.fillRect(3,ly-7,W-6,14);}
+      ctx.fillStyle=sel?'#d0e0f8':'#7080a0';
+      if(sel)ctx.fillText('>',pX+1,ly);
+      ctx.fillText(opt,pX+8,ly);
+    });
+    ctx.fillStyle='#203048';ctx.font='3px "Press Start 2P"';
+    ctx.textAlign='right';ctx.fillText('[1 / 2 / 3  ou  setas + ENTER]',W-7,bY+bH-6);ctx.textAlign='left';
+  }
+}
+
+// ── GAME OVER ──────────────────────────────────────────────────────
+function rGameover(){
+  ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
+  const vg=ctx.createRadialGradient(W/2,H/2,15,W/2,H/2,W*.75);
+  vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,'rgba(0,20,60,.7)');
+  ctx.fillStyle=vg;ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#102060';ctx.font='7px "Press Start 2P"';ctx.fillText('INCORRETO',W/2,32);
+  ctx.fillStyle='#c0a830';ctx.font='4px "Press Start 2P"';
+  S.goMsg.forEach((l,i)=>ctx.fillText(l,W/2,54+i*12));
+  if(S.mf<.92){
+    ctx.fillStyle='#c0d0e8';ctx.font='5px "Press Start 2P"';
+    ctx.fillText('ENTER: tentar novamente',W/2,148);
+  }
+  ctx.textAlign='left';
+}
+
+// ── EPIFANIA ───────────────────────────────────────────────────────
+function rEpiphany(){
+  const t=S.epT;
+  const p=Math.min(1,t/1.4);
+  // Flash inicial: azul-branco frio (razão crítica)
+  ctx.fillStyle=`rgb(${~~(p*180)},${~~(p*205)},${~~(p*235)})`;
+  ctx.fillRect(0,0,W,H);
+  if(t>1){
+    ctx.fillStyle='rgba(4,6,18,.88)';ctx.fillRect(0,0,W,H);
+    const ga=ctx.createRadialGradient(W/2,H/2,0,W/2,H/2,W*.85);
+    ga.addColorStop(0,'rgba(140,170,230,.22)');ga.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=ga;ctx.fillRect(0,0,W,H);
+    const ta=Math.min(1,(t-1)/.9);
+    ctx.globalAlpha=ta;ctx.textAlign='center';
+
+    // Fase 1 — O Calvinista admite a derrota
+    if(t<3.2){
+      ctx.fillStyle='#5068a0';ctx.font='3px "Press Start 2P"';
+      ctx.fillText('"...Impossível. Você delimitou a razão."',W/2,H/2-32);
+      ctx.fillStyle='#7090c0';ctx.font='4px "Press Start 2P"';
+      ctx.fillText('Stand THE ANCIENT se fragmenta.',W/2,H/2-18);
+      ctx.fillStyle='#4060a0';ctx.font='3px "Press Start 2P"';
+      ctx.fillText('"Talvez o limite seja exatamente',W/2,H/2-4);
+      ctx.fillText('o que a razão tem de confiável."',W/2,H/2+6);
+    }
+    // Fase 2 — CLOSE TO THE EDGE
+    if(t>2.8){
+      const ta2=Math.min(1,(t-2.8)/.9);ctx.globalAlpha=ta*ta2;
+      ctx.fillStyle='rgba(4,6,18,.75)';ctx.fillRect(0,0,W,H);
+      ctx.fillStyle='#c0a830';ctx.font='7px "Press Start 2P"';
+      ctx.fillText('CLOSE TO THE EDGE',W/2,H/2-20);
+      ctx.fillStyle='#8090c0';ctx.font='4px "Press Start 2P"';
+      ctx.fillText('Mas o limite é o fundamento.',W/2,H/2-4);
+    }
+    // Fase 3 — Síntese dos quatro filósofos
+    if(t>4.2){
+      const ta3=Math.min(1,(t-4.2)*.75);ctx.globalAlpha=ta*ta3;
+      ctx.fillStyle='#8090b8';ctx.font='3px "Press Start 2P"';
+      ctx.fillText('Bacon limpou a visão.',W/2,H/2+18);
+      ctx.fillText('Locke organizou a experiência.',W/2,H/2+28);
+      ctx.fillText('Hume dissolveu a ilusão de necessidade.',W/2,H/2+38);
+      ctx.fillStyle='#c0a830';
+      ctx.fillText('Kant: a necessidade está no sujeito.',W/2,H/2+50);
+    }
+    // Fase 4 — Parabéns
+    if(t>5.8){
+      const ta4=Math.min(1,(t-5.8)*.85);ctx.globalAlpha=ta*ta4;
+      ctx.fillStyle='#c0a830';ctx.font='6px "Press Start 2P"';ctx.fillText('PARABÉNS!',W/2,H/2+68);
+      ctx.fillStyle='#7080b0';ctx.font='4px "Press Start 2P"';
+      ctx.fillText('O Calvinista de Königsberg concluído.',W/2,H/2+80);
+    }
+    // Fase 5 — Gancho Game 2
+    if(t>7.6){
+      const ta5=Math.min(1,(t-7.6)*.55);ctx.globalAlpha=ta*ta5;
+      ctx.fillStyle='#4a5888';ctx.font='3px "Press Start 2P"';
+      ctx.fillText('Mas se o sujeito estrutura o objeto...',W/2,H/2+96);
+      ctx.fillText('quem estrutura o sujeito?',W/2,H/2+108);
+      ctx.fillStyle='#303c60';
+      ctx.fillText('Quatro silhuetas no horizonte.',W/2,H/2+120);
+      ctx.fillText('"— Essa pergunta é nossa."',W/2,H/2+130);
+      ctx.fillStyle='#202840';
+      ctx.fillText('[To be continued — Game 2]',W/2,H/2+142);
+    }
+    if(t>9.6){
+      ctx.globalAlpha=1;
+      ctx.fillStyle='rgba(4,6,18,.92)';ctx.fillRect(0,H-26,W,26);
+      if(S.frame%30<20){
+        ctx.fillStyle='#c0a830';ctx.font='4px "Press Start 2P"';
+        ctx.fillText('ENTER → ver o Final',W/2,H-10);
+      }
+    }
+    ctx.globalAlpha=1;ctx.textAlign='left';
+  }
+}
+
+// ── LOOP ───────────────────────────────────────────────────────────
+function loop(ts){
+  const dt=Math.min((ts-(S.lastT||ts))/1000,.05);
+  S.lastT=ts;update(dt);render();requestAnimationFrame(loop);
+}
+document.fonts.ready.then(()=>requestAnimationFrame(loop));
+</script>
+</body>
+</html>

@@ -3,1002 +3,143 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width">
-<title>O Labirinto de Descartes</title>
+<title>Ventos Modernos — Uma Revisão Filosófica</title>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{width:100%;min-height:100vh;background:#020004;display:flex;
+html,body{width:100%;min-height:100vh;background:#03040a;display:flex;
   align-items:center;justify-content:center;flex-direction:column}
 #c{display:block;width:min(96vw,1280px);height:auto;aspect-ratio:16/9;
   image-rendering:pixelated;image-rendering:crisp-edges;cursor:default;
-  border:2px solid #2a1808;
-  box-shadow:0 0 50px rgba(180,90,10,.15),0 0 2px rgba(200,120,20,.35)}
-#sub{font-family:'Press Start 2P',monospace;font-size:9px;color:#3a2010;
+  border:2px solid #2a2018;
+  box-shadow:0 0 50px rgba(120,90,40,.15),0 0 2px rgba(180,140,60,.30)}
+#sub{font-family:'Press Start 2P',monospace;font-size:9px;color:#3a3020;
   margin-top:8px;letter-spacing:.5px;text-align:center}
 </style>
 </head>
 <body>
 <canvas id="c" width="640" height="360"></canvas>
-<div id="sub">WASD · E / Espaço para interagir · 1 2 3 para responder</div>
+<div id="sub">↑ ↓ selecionar  ·  ENTER iniciar  ·  clique também funciona</div>
 <script>
 'use strict';
-// Canvas fisico 640x360; logica 320x180; ctx.scale(2,2) em cada frame
 const cv=document.getElementById('c'),ctx=cv.getContext('2d');
-const W=320,H=180,T=16;
+const W=320,H=180;
 
-const lc=document.createElement('canvas');
-lc.width=640;lc.height=360;
-const lx=lc.getContext('2d');
+function vmProgress(){try{return JSON.parse(localStorage.getItem('vm_progress')||'{}');}catch(e){return{};}}
 
-// ── TILES ──────────────────────────────────────────────────────────
-const VOID=0,FLOOR=1,WALL=2,DOOR=3,T_C=4,T_M=5,T_A=6;
-
-// ── MAPA 30x24 ────────────────────────────────────────────────────
-const MRAW=[
-'##############################', //  0
-'#............................#', //  1
-'#............................#', //  2
-'#.....C......................#', //  3  vela col 6
-'#............................#', //  4
-'#............................#', //  5
-'#............................#', //  6
-'#############DDD##############', //  7  porta-1 cols 13-15
-'#############...##############', //  8
-'#############...##############', //  9
-'#............................#', // 10  setor B
-'#...####.............####....#', // 11
-'#...#  #.............#  #....#', // 12
-'#...#  #.........M...#  #....#', // 13  espelho col 17
-'#...####.............####....#', // 14
-'#............................#', // 15
-'#############DDD##############', // 16  porta-2 cols 13-15
-'#############...##############', // 17
-'#############...##############', // 18
-'#............................#', // 19  setor C
-'#...........A................#', // 20  altar col 12
-'#............................#', // 21
-'#............................#', // 22
-'##############################', // 23
+const CHAPTERS=[
+  {n:'I',title:'O Labirinto de Descartes',trad:'Racionalismo — Tese',href:'stage1/',key:'stage1',
+   sub:'René Descartes  •  Meditações Metafísicas  •  1641'},
+  {n:'II',title:'A Cruzada Sensorial',trad:'Empirismo — Antítese',href:'stage2/',key:'stage2',
+   sub:'Francis Bacon · John Locke · David Hume'},
+  {n:'III',title:'O Calvinista de Königsberg',trad:'Filosofia Crítica — Síntese',href:'stage3/',key:'stage3',
+   sub:'Immanuel Kant  •  1781  •  Königsberg'},
 ];
-const MR=MRAW.length,MC=MRAW[0].length;
-const MAP=MRAW.map(r=>[...r].map(ch=>
-  ({' ':VOID,'#':WALL,'D':DOOR,'.':FLOOR,'C':T_C,'M':T_M,'A':T_A}[ch]??VOID)
-));
-const POS_C=[3,6],POS_M=[13,17],POS_A=[20,12];
-const DR1=[[7,13],[7,14],[7,15]],DR2=[[16,13],[16,14],[16,15]];
 
-// ── AUDIO (Web Audio API — FM + reverb, estilo SNES/Mega Drive) ──────────
-let AC=null,revIn=null;
+const S={sel:0,frame:0,lastT:0};
+const ROWS_Y=[88,104,120];
+const ROW_H=14;
 
-function initAudio(){
-  if(AC)return;
-  try{
-    AC=new(window.AudioContext||window.webkitAudioContext)();
-    if(AC.state==='suspended')AC.resume();
-    setupReverb();
-    setTimeout(startAmbient,900);
-  }catch(e){AC=null;}
-}
-
-// Reverb por rede de filtros-pente (3 delays em paralelo)
-function setupReverb(){
-  if(!AC||revIn)return;
-  const wet=AC.createGain();wet.gain.value=.28;wet.connect(AC.destination);
-  revIn=AC.createGain();revIn.gain.value=1;
-  [.067,.089,.113].forEach((d,i)=>{
-    const dl=AC.createDelay(.5),fb=AC.createGain();
-    dl.delayTime.value=d;fb.gain.value=.22-.02*i;
-    revIn.connect(dl);dl.connect(fb);fb.connect(dl);dl.connect(wet);
-  });
-}
-
-// Sintese FM: portadora + modulador → timbre rico (YM2612-like)
-function fm(cFreq,mRatio,idx,delay,dur,vol,noRev){
-  if(!AC)return;
-  const t=AC.currentTime+delay;
-  const c=AC.createOscillator(),m=AC.createOscillator();
-  const mG=AC.createGain(),env=AC.createGain();
-  c.type=m.type='sine';
-  c.frequency.value=cFreq;m.frequency.value=cFreq*mRatio;mG.gain.value=cFreq*idx;
-  m.connect(mG);mG.connect(c.frequency);c.connect(env);
-  env.connect(AC.destination);
-  if(!noRev&&revIn)env.connect(revIn);
-  env.gain.setValueAtTime(0,t);
-  env.gain.linearRampToValueAtTime(vol,t+.015);
-  env.gain.exponentialRampToValueAtTime(vol*.7,t+.08);
-  env.gain.setValueAtTime(vol*.7,t+Math.max(dur-.12,t+.09));
-  env.gain.linearRampToValueAtTime(.0001,t+dur);
-  m.start(t);c.start(t);m.stop(t+dur+.02);c.stop(t+dur+.02);
-}
-
-// Nota quente (triângulo + vibrato suave) — estilo SPC700 do SNES
-function warm(freq,delay,dur,vol){
-  if(!AC)return;
-  const t=AC.currentTime+delay;
-  const o=AC.createOscillator(),lfo=AC.createOscillator();
-  const lG=AC.createGain(),env=AC.createGain();
-  o.type='triangle';lfo.frequency.value=5.5;lG.gain.value=freq*.008;
-  lfo.connect(lG);lG.connect(o.frequency);o.frequency.value=freq;
-  o.connect(env);env.connect(AC.destination);if(revIn)env.connect(revIn);
-  env.gain.setValueAtTime(0,t);
-  env.gain.linearRampToValueAtTime(vol,t+.04);
-  env.gain.setValueAtTime(vol*.75,t+.2);
-  env.gain.setValueAtTime(vol*.75,t+Math.max(dur-.15,t+.21));
-  env.gain.linearRampToValueAtTime(.0001,t+dur);
-  lfo.start(t);o.start(t);lfo.stop(t+dur);o.stop(t+dur);
-}
-
-// Passo: FM kick curto (pitch sweep)
-function playStep(){
-  if(!AC)return;
-  const t=AC.currentTime;
-  const o=AC.createOscillator(),env=AC.createGain();
-  o.type='sine';
-  o.frequency.setValueAtTime(130,t);
-  o.frequency.exponentialRampToValueAtTime(40,t+.06);
-  o.connect(env);env.connect(AC.destination);
-  env.gain.setValueAtTime(.16,t);
-  env.gain.exponentialRampToValueAtTime(.001,t+.09);
-  o.start(t);o.stop(t+.1);
-}
-
-// Acerto: arpejo FM de sino ascendente
-function playSuccess(){
-  [[330,.0],[415,.13],[523,.26],[659,.4]].forEach(([f,d])=>fm(f,14,1,d,.38,.15));
-}
-
-// Erro: descida FM dissonante
-function playWrong(){
-  fm(220,1.5,8,0,.4,.2);fm(196,1.8,10,.15,.42,.18);fm(165,2.2,12,.32,.5,.2);
-}
-
-// Risada maligna: tremolo FM com queda de pitch + série de pulsos
-function playEvilLaugh(){
-  if(!AC)return;
-  // Pulsos descendentes
-  for(let i=0;i<5;i++)fm(300-i*35,2,6,i*.22,.22,.22-i*.02,true);
-  // Glide final
-  const t=AC.currentTime+1.2;
-  const o=AC.createOscillator(),lfo=AC.createOscillator();
-  const lG=AC.createGain(),env=AC.createGain();
-  lfo.frequency.value=11;lG.gain.value=110;
-  lfo.connect(lG);lG.connect(o.frequency);
-  o.connect(env);env.connect(AC.destination);
-  o.type='square';o.frequency.value=180;
-  o.frequency.linearRampToValueAtTime(55,t+1.4);
-  env.gain.setValueAtTime(.22,t);env.gain.linearRampToValueAtTime(.001,t+1.6);
-  lfo.start(t);o.start(t);lfo.stop(t+1.7);o.stop(t+1.7);
-}
-
-// Fanfarra da epifania: acordes FM ascendentes + sustain warm
-function playFanfare(){
-  [[262,330,392,.0],[330,415,523,.22],[392,494,659,.44],[523,659,784,.66]]
-    .forEach(([a,b,c2,d])=>{
-      fm(a,1,2,d,.55,.11);fm(b,1,2,d,.55,.10);fm(c2,1,2,d,.55,.09);
-    });
-  [[523,.9],[659,.9],[784,.9]].forEach(([f,d])=>warm(f,d,2.8,.07));
-}
-
-// Ambiente: loop SNES/dungeon (baixo FM + vozes internas + melodia triângulo)
-function startAmbient(){
-  if(!AC)return;
-  function loop(){
-    if(!AC)return;
-    // Baixo FM descendente: A-G-F-E (lúgubre)
-    [[110,.0],[98,2.0],[87,4.0],[82,6.0]].forEach(([f,d])=>fm(f,.5,3,d,1.9,.07));
-    // Vozes internas (pad FM)
-    [[220,1.4],[247,3.5],[208,5.6]].forEach(([f,d])=>fm(f,1,1.5,d,1.7,.04));
-    // Melodia: triângulo aquecido em mi-menor pentatônico
-    warm(659,.9,1.1,.038);warm(587,2.4,.8,.033);
-    warm(523,4.0,1.5,.040);warm(440,6.2,1.0,.032);warm(392,7.4,.9,.030);
-    setTimeout(loop,8100);
-  }
-  setTimeout(loop,1300);
-}
-
-// ── TEXTO DE INTRODUCAO ────────────────────────────────────────────
-const INTRO=[
-  'Alemanha, 1619.',
-  'Uma noite de inverno rigoroso.',
-  '',
-  'Você desperta em um escritório',
-  'mal iluminado. O frio é intenso.',
-  '',
-  'A única luz vem de uma vela que',
-  'parece derreter de forma estranha.',
-  '',
-  'Uma carta repousa sobre a mesa.',
-];
-const INTRO_TOTAL=INTRO.reduce((s,l)=>s+Math.max(1,l.length),0);
-
-// ── DIALOGOS (estrutura: narrativa → espera → escolha) ────────────
-// narrative: linhas exibidas em efeito maquina de escrever
-// question:  pergunta mostrada na fase de escolha
-// opts:      3 opcoes de resposta
-// ok:        indices das opcoes corretas
-const DLGS={
-  candle:{
-    narrative:[
-      '"Saudações, viajante. Você acredita',
-      ' no que vê? Se os sentidos já te',
-      ' enganaram uma única vez, como',
-      ' pode confiar neles agora?',
-      '',
-      ' A vela era dura, fria, cheirava',
-      ' a flores. Agora está líquida,',
-      ' quente. O cheiro sumiu.',
-      ' Desista do conhecimento!"',
-    ],
-    question:'O que resta da vela quando tudo muda?',
-    opts:['A. A forma e a cor',
-          'B. A extensão e a matéria',
-          'C. O cheiro e a dureza'],
-    ok:[1],
-    okRes:{type:'progress',val:1,door:DR1,
-      msg:['Correto! A extensão permanece.','O caminho se abre.']},
-    noRes:{
-      msg:['Triste! Falibilidade da percepção.',
-           'Onde estava nas aulas de Platão?',
-           'Em alguma caverna?',
-           'Como o remo partido na água:',
-           'os sentidos enganam — uma vez',
-           'ja basta. O labirinto fechou.'],
-    },
-  },
-  mirror:{
-    narrative:[
-      '"Correto. A extensão permanece.',
-      ' Mas como sabe que não está',
-      ' sonhando agora? Muitas vezes',
-      ' sonhei estar aqui, acordado',
-      ' — e era ilusão pura.',
-      ' O que separa este momento',
-      ' de um pesadelo?"',
-    ],
-    question:'O que distingue a vigília do sonho?',
-    opts:['A. A vivacidade das minhas sensações',
-          'B. A lógica clara da matemática',
-          'C. Não há critério seguro agora'],
-    ok:[1,2],
-    okRes:{type:'progress',val:2,door:DR2,
-      msg:['Certo. O labirinto cede.','Avança para o confronto final.']},
-    noRes:{
-      msg:['Ainda preso no sonho, Caçador!',
-           'Devia ter jogado Bloodborne!',
-           'Ao sonhar, sensações são tão',
-           'vividas quanto acordado.',
-           'Ate o velhote chines ficou',
-           'perdido: borboleta ou homem?'],
-    },
-  },
-  altar:{
-    narrative:[
-      '"Você é persistente. Mas eu sou',
-      ' um Genio Astuto — MUITO MAL!',
-      ' AHAHAHA! Controle sua lógica!',
-      ' Faço você crer que 2+3=5.',
-      ' Nada é real! Matrix! Truman!',
-      ' O que resta quando eu apago',
-      ' o mundo e a logica?"',
-    ],
-    question:'O que persiste quando o mundo desaparece?',
-    opts:['A. O meu corpo físico',
-          'B. O ato de eu estar duvidando',
-          'C. A minha memória do passado'],
-    ok:[1],
-    okRes:{type:'epiphany'},
-    noRes:{
-      msg:['AHAHAHA! Sou eu quem sopra',
-           'lógica no seu ouvido, infeliz!',
-           'Como é bom enganar vocês...',
-           'Se eu apaguei o mundo, como',
-           'você ainda tem corpo ou',
-           'memoria? Ah, pobre Platão!'],
-      evilLaugh:true,
-    },
-  },
-};
-
-// ── ESTADO ────────────────────────────────────────────────────────
-const S={
-  scene:'menu',  // menu | intro | playing | dialogue | gameover | epiphany
-  progress:0,
-  px:14*T+8,py:4*T+8,face:2,pf:0,pft:0,moving:false,prevPf:-1,
-  cx:0,cy:0,
-  // Dialogo (3 fases: typing → waiting → choosing)
-  dKey:null,dPhase:null,dIdx:0,dTotal:0,dSel:0,
-  // Introducao
-  introIdx:0,
-  okMsg:[],okT:0,
-  goMsg:[],
-  epT:0,mf:0,
-  lastSector:-1,sectorLabel:'',sectorLabelT:0,
-  frame:0,lastT:0,
-};
-
-// ── INPUT ─────────────────────────────────────────────────────────
-const K={},KP={};
 window.addEventListener('keydown',e=>{
-  initAudio();
-  if(!K[e.code])KP[e.code]=true;
-  K[e.code]=true;
-  if(/^(Arrow|Space)/.test(e.code))e.preventDefault();
+  if(e.code==='ArrowUp'){S.sel=(S.sel+2)%3;e.preventDefault();}
+  if(e.code==='ArrowDown'){S.sel=(S.sel+1)%3;e.preventDefault();}
+  if(e.code==='Enter'||e.code==='Space'){go(S.sel);e.preventDefault();}
 });
-window.addEventListener('keyup',e=>{delete K[e.code];});
+cv.addEventListener('click',e=>{
+  const r=cv.getBoundingClientRect();
+  const my=((e.clientY-r.top)/r.height)*H;
+  ROWS_Y.forEach((ry,i)=>{if(my>ry-ROW_H/2&&my<ry+ROW_H/2){S.sel=i;go(i);}});
+});
+function go(i){location.href=CHAPTERS[i].href;}
 
-// ── AUXILIARES ────────────────────────────────────────────────────
-function tileAt(col,row){
-  if(col<0||col>=MC||row<0||row>=MR)return WALL;
-  return MAP[row][col];
-}
-function solid(t){return t===WALL||t===DOOR||t===VOID;}
-function canGo(x,y){
-  const hw=5,hh=6,f=n=>Math.floor(n/T);
-  return!solid(tileAt(f(x-hw),f(y-hh)))&&!solid(tileAt(f(x+hw),f(y-hh)))&&
-         !solid(tileAt(f(x-hw),f(y+hh)))&&!solid(tileAt(f(x+hw),f(y+hh)));
-}
-function camSync(){
-  S.cx=Math.max(0,Math.min(MC*T-W,Math.round(S.px-W/2)));
-  S.cy=Math.max(0,Math.min(MR*T-H,Math.round(S.py-H/2)));
-}
-function nearObj(){
-  const pc=Math.floor(S.px/T),pr=Math.floor(S.py/T);
-  for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){
-    const r=pr+dr,c=pc+dc;
-    if(r<0||r>=MR||c<0||c>=MC)continue;
-    const t=MAP[r][c];
-    if(t===T_C&&S.progress===0)return'candle';
-    if(t===T_M&&S.progress===1)return'mirror';
-    if(t===T_A&&S.progress===2)return'altar';
-  }
-  return null;
-}
-function openDlg(key){
-  const d=DLGS[key];
-  S.dKey=key;S.dPhase='typing';S.dIdx=0;
-  S.dTotal=d.narrative.reduce((s,l)=>s+Math.max(1,l.length),0);
-  S.dSel=0;S.scene='dialogue';
-}
-function pickOpt(idx){
-  const d=DLGS[S.dKey];
-  const ok=d.ok.includes(idx);
-  if(ok){
-    playSuccess();
-    const r=d.okRes;
-    if(r.type==='progress'){
-      S.progress=r.val;
-      r.door.forEach(([row,col])=>MAP[row][col]=FLOOR);
-      S.okMsg=r.msg;S.okT=2.8;S.scene='playing';
-    } else {
-      setTimeout(playFanfare,300);
-      S.scene='epiphany';S.epT=0;
-    }
-  } else {
-    playWrong();
-    if(d.noRes.evilLaugh)setTimeout(playEvilLaugh,400);
-    S.goMsg=d.noRes.msg;S.scene='gameover';
-  }
-  S.dKey=null;
-}
-function respawn(){
-  if(S.progress===0){S.px=14*T+8;S.py=4*T+8;}
-  else if(S.progress===1){S.px=14*T+8;S.py=11*T+8;}
-  else{S.px=14*T+8;S.py=20*T+8;}
-  camSync();
-}
-
-// ── UPDATE ────────────────────────────────────────────────────────
-function update(dt){
-  S.frame++;S.mf=(S.mf+dt)%1.4;
-  if(S.okT>0)S.okT-=dt;
-  if(S.sectorLabelT>0)S.sectorLabelT-=dt;
-
-  if(S.scene==='menu'){
-    if(KP.Enter||KP.Space){S.scene='intro';S.introIdx=0;}
-  }
-
-  else if(S.scene==='intro'){
-    S.introIdx=Math.min(INTRO_TOTAL,S.introIdx+2);
-    if(KP.Enter||KP.Space){
-      if(S.introIdx<INTRO_TOTAL)S.introIdx=INTRO_TOTAL;
-      else S.scene='playing';
-    }
-  }
-
-  else if(S.scene==='playing'){
-    let dx=0,dy=0;
-    if(K.ArrowLeft||K.KeyA){dx=-1;S.face=3;}
-    if(K.ArrowRight||K.KeyD){dx=1;S.face=1;}
-    if(K.ArrowUp||K.KeyW){dy=-1;S.face=0;}
-    if(K.ArrowDown||K.KeyS){dy=1;S.face=2;}
-    if(dx&&dy){dx*=.707;dy*=.707;}
-    S.moving=dx!==0||dy!==0;
-    const sp=58*dt;
-    const nx=S.px+dx*sp,ny=S.py+dy*sp;
-    if(canGo(nx,ny)){S.px=nx;S.py=ny;}
-    else if(canGo(nx,S.py))S.px=nx;
-    else if(canGo(S.px,ny))S.py=ny;
-    S.px=Math.max(8,Math.min(MC*T-8,S.px));
-    S.py=Math.max(8,Math.min(MR*T-8,S.py));
-    // Animacao e som de passos
-    if(S.moving){
-      S.pft+=dt;
-      if(S.pft>.35){S.pft=0;S.pf^=1;}
-      if(S.pf!==S.prevPf){playStep();S.prevPf=S.pf;}
-    } else {S.pf=0;S.pft=0;S.prevPf=-1;}
-    camSync();
-    // Rotulo de setor
-    const pr=Math.floor(S.py/T);
-    const sec=pr<10?0:pr<19?1:2;
-    if(sec!==S.lastSector){
-      S.lastSector=sec;
-      const lb=['I — O Quarto na Alemanha',
-                'II — Os Corredores do Sonho',
-                'III — O Altar do Gênio Maligno'];
-      S.sectorLabel=lb[sec];S.sectorLabelT=2.8;
-    }
-    if(KP.KeyE||KP.Space||KP.Enter){const o=nearObj();if(o)openDlg(o);}
-  }
-
-  else if(S.scene==='dialogue'){
-    const d=DLGS[S.dKey];
-    if(S.dPhase==='typing'){
-      // Avanco normal: 2 chars/frame; ESPACO = pula para o fim
-      S.dIdx=Math.min(S.dTotal,S.dIdx+(K.Space||K.Enter?6:2));
-      if(KP.Space||KP.Enter){S.dIdx=S.dTotal;}
-      if(S.dIdx>=S.dTotal)S.dPhase='waiting';
-    }
-    else if(S.dPhase==='waiting'){
-      // Texto completo — aguarda ENTER para ir para as opcoes
-      if(KP.Enter||KP.Space)S.dPhase='choosing';
-    }
-    else if(S.dPhase==='choosing'){
-      if(KP.ArrowUp)S.dSel=Math.max(0,S.dSel-1);
-      if(KP.ArrowDown)S.dSel=Math.min(2,S.dSel+1);
-      if(KP.Digit1)pickOpt(0);
-      if(KP.Digit2)pickOpt(1);
-      if(KP.Digit3)pickOpt(2);
-      if(KP.Enter||KP.Space)pickOpt(S.dSel);
-    }
-  }
-
-  else if(S.scene==='gameover'){
-    if(KP.Enter||KP.Space){respawn();S.scene='playing';}
-  }
-
-  else if(S.scene==='epiphany'){S.epT+=dt;}
-
-  for(const k in KP)delete KP[k];
-}
-
-// ── RENDER ────────────────────────────────────────────────────────
 function render(){
   ctx.setTransform(2,0,0,2,0,0);
   ctx.clearRect(0,0,W,H);
-  if(S.scene==='menu')rMenu();
-  else if(S.scene==='intro')rIntro();
-  else if(S.scene==='playing'||S.scene==='dialogue')rGame();
-  else if(S.scene==='gameover')rGameover();
-  else rEpiphany();
-}
 
-// ── MENU ──────────────────────────────────────────────────────────
-function rMenu(){
-  ctx.fillStyle='#030108';ctx.fillRect(0,0,W,H);
-  ctx.fillStyle='#08030e';
-  for(let x=0;x<W;x+=22)ctx.fillRect(x,0,2,H);
-  const bg=ctx.createRadialGradient(W/2,H+10,5,W/2,H+10,130);
-  bg.addColorStop(0,'rgba(160,70,8,.18)');bg.addColorStop(1,'rgba(0,0,0,0)');
+  // Fundo — gradiente noturno (mescla das três paletas: gótico, âmbar, azul-frio)
+  const bgGrad=ctx.createLinearGradient(0,0,0,H);
+  bgGrad.addColorStop(0,'#0a0612');
+  bgGrad.addColorStop(.5,'#120e10');
+  bgGrad.addColorStop(1,'#0a0c14');
+  ctx.fillStyle=bgGrad;ctx.fillRect(0,0,W,H);
+
+  // Estrelas/poeira sutil
+  ctx.fillStyle='rgba(180,160,120,.5)';
+  for(let i=0;i<40;i++){
+    const x=(i*37+~~(S.frame*.05))%W,y=(i*53)%H;
+    if((i*7+~~(S.frame*.02))%19===0)ctx.fillRect(x,y,1,1);
+  }
+
+  const pulse=.5+Math.sin(S.frame*.04)*.5;
+  const bg=ctx.createRadialGradient(W/2,8,4,W/2,8,120);
+  bg.addColorStop(0,`rgba(200,150,60,${.10+pulse*.05})`);bg.addColorStop(1,'rgba(0,0,0,0)');
   ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
 
   ctx.textAlign='center';
-  ctx.fillStyle='#b06010';ctx.font='8px "Press Start 2P"';
-  ctx.fillText('O LABIRINTO',W/2,44);
-  ctx.fillText('DE DESCARTES',W/2,56);
-  ctx.fillStyle='#6a4820';ctx.font='4px "Press Start 2P"';
-  ctx.fillText('Uma Jornada pela Dúvida Metódica',W/2,74);
-  ctx.fillStyle='#3a2010';
-  for(let i=0;i<24;i++)ctx.fillRect(W/2-58+i*5,80,2,1);
-  // Subtitulo legivel (cor significativamente mais clara)
-  ctx.fillStyle='#907050';ctx.font='3px "Press Start 2P"';
-  ctx.fillText('I. O Quarto  |  II. Os Corredores do Sonho  |  III. O Altar',W/2,95);
-  if(S.mf<.95){
-    ctx.fillStyle='#d8c080';ctx.font='5px "Press Start 2P"';
-    ctx.fillText('PRESSIONE ENTER',W/2,122);
-  }
-  ctx.fillStyle='#6a4828';ctx.font='3px "Press Start 2P"';
-  ctx.fillText('WASD ou setas  |  E = interagir  |  1 2 3 = responder',W/2,158);
-  ctx.fillText('René Descartes  •  Meditações Metafísicas  •  1641',W/2,168);
-  ctx.textAlign='left';
-}
 
-// ── INTRODUCAO ────────────────────────────────────────────────────
-function rIntro(){
-  ctx.fillStyle='#030108';ctx.fillRect(0,0,W,H);
-  // Vinheta lateral
-  const vg=ctx.createRadialGradient(W/2,H/2,40,W/2,H/2,W*.7);
-  vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,'rgba(0,0,0,.5)');
-  ctx.fillStyle=vg;ctx.fillRect(0,0,W,H);
+  // Selo do curso
+  ctx.fillStyle='#5a5040';ctx.font='3px "Press Start 2P"';
+  ctx.fillText('UNIFOR — Fundamentos Filosóficos e Epistemológicos',W/2,11);
 
-  // Caixa de texto
-  const bX=18,bY=18,bW=W-36,bH=H-36;
-  ctx.fillStyle='rgba(4,3,14,.9)';ctx.fillRect(bX,bY,bW,bH);
-  ctx.strokeStyle='#604820';ctx.lineWidth=1;ctx.strokeRect(bX,bY,bW,bH);
-  ctx.strokeStyle='#2a1808';ctx.strokeRect(bX+1,bY+1,bW-2,bH-2);
-  // Ornamentos de canto
-  ctx.fillStyle='#9a6824';
-  [[bX,bY],[bX+bW-3,bY],[bX,bY+bH-3],[bX+bW-3,bY+bH-3]]
-    .forEach(([x,y])=>ctx.fillRect(x,y,3,3));
+  // Título
+  ctx.fillStyle='#e8d8a0';ctx.font='9px "Press Start 2P"';
+  ctx.fillText('VENTOS MODERNOS',W/2,28);
+  ctx.fillStyle='#a89058';ctx.font='4px "Press Start 2P"';
+  ctx.fillText('Uma Revisão Filosófica',W/2,40);
 
-  // "Alemanha, 1619" como cabecalho
-  ctx.fillStyle='#8a6030';ctx.font='3px "Press Start 2P"';
-  ctx.textAlign='center';ctx.fillText('— 1619 —',W/2,bY+8);ctx.textAlign='left';
+  ctx.fillStyle='#3a3424';
+  for(let i=0;i<30;i++)ctx.fillRect(W/2-72+i*5,46,2,1);
 
-  // Texto com efeito maquina de escrever
-  ctx.fillStyle='#d8c888';ctx.font='4px "Press Start 2P"';
-  let rem=S.introIdx,ly=bY+18;
-  for(const line of INTRO){
-    if(rem<=0)break;
-    if(line===''){rem-=1;ly+=6;continue;}
-    ctx.fillText(line.substring(0,Math.min(rem,line.length)),bX+8,ly);
-    rem-=line.length;ly+=9;
-    if(ly>bY+bH-18)break;
-  }
+  // Crédito acadêmico
+  ctx.fillStyle='#807050';ctx.font='3px "Press Start 2P"';
+  ctx.fillText('Atividade da Turma 51 de Fundamentos Filosóficos',W/2,57);
+  ctx.fillText('e Epistemológicos da UNIFOR',W/2,64);
+  ctx.fillStyle='#a89058';
+  ctx.fillText('Prof. Dr. Filipe de Menezes Jesuino',W/2,72);
 
-  // Prompt de avanco
-  if(S.introIdx>=INTRO_TOTAL){
-    if(S.frame%30<20){
-      ctx.fillStyle='#c8a840';ctx.font='4px "Press Start 2P"';
-      ctx.textAlign='center';ctx.fillText('ENTER para continuar',W/2,bY+bH-10);
-      ctx.textAlign='left';
+  ctx.fillStyle='#3a3424';
+  for(let i=0;i<30;i++)ctx.fillRect(W/2-72+i*5,79,2,1);
+
+  // Capítulos
+  const prog=vmProgress();
+  CHAPTERS.forEach((c,i)=>{
+    const y=ROWS_Y[i],isSel=i===S.sel,done=!!prog[c.key];
+    if(isSel){
+      ctx.fillStyle='rgba(200,160,60,.10)';
+      ctx.fillRect(28,y-8,W-56,ROW_H);
     }
-  } else {
-    ctx.fillStyle='#3a2810';ctx.font='3px "Press Start 2P"';
-    ctx.textAlign='right';ctx.fillText('[ESPACO p/ pular]',W-bX-4,bY+bH-6);
-    ctx.textAlign='left';
-  }
-}
-
-// ── JOGO ──────────────────────────────────────────────────────────
-function rGame(){
-  ctx.fillStyle='#020105';ctx.fillRect(0,0,W,H);
-  rTiles();rPlayer();rLight();
-  if(S.okT>0)rOkMsg();
-  if(S.scene==='playing')rHint();
-  rSectorLabel();
-  if(S.scene==='dialogue')rDlg();
-}
-
-// ── TILES ─────────────────────────────────────────────────────────
-function rTiles(){
-  const cx=S.cx,cy=S.cy;
-  const c0=Math.max(0,~~(cx/T)),c1=Math.min(MC,~~((cx+W)/T)+2);
-  const r0=Math.max(0,~~(cy/T)),r1=Math.min(MR,~~((cy+H)/T)+2);
-  for(let r=r0;r<r1;r++)for(let c=c0;c<c1;c++)
-    drawTile(c*T-cx,r*T-cy,MAP[r][c],c,r);
-}
-function drawTile(sx,sy,tp,c,r){
-  const n=S.frame;
-  switch(tp){
-    case VOID:ctx.fillStyle='#010004';ctx.fillRect(sx,sy,T,T);break;
-    case FLOOR:
-      ctx.fillStyle='#1c1510';ctx.fillRect(sx,sy,T,T);
-      ctx.fillStyle='#161008';
-      if((c*7+r*13)%11===0)ctx.fillRect(sx+4,sy+4,1,1);
-      if((c*3+r*7)%9===0)ctx.fillRect(sx+11,sy+11,1,1);
-      if((c+r*11)%15===0)ctx.fillRect(sx+8,sy+7,1,1);
-      break;
-    case WALL:{
-      // Argamassa (fundo)
-      ctx.fillStyle='#0e0818';ctx.fillRect(sx,sy,T,T);
-      // Blocos de pedra em tijolamento alternado
-      // Linha par: bloco esq (0-6) + dir (8-15) | Linha ímpar: parciais+centro
-      const ev=r%2===0;
-      const st=[ev?[0,0,7,7]:[0,0,4,7],ev?[8,0,8,7]:[5,0,7,7],
-               !ev?[13,0,3,7]:null,
-               ev?[0,8,4,7]:[0,8,7,7],ev?[5,8,7,7]:[8,8,8,7],
-               ev?[13,8,3,7]:null];
-      st.forEach(b=>{
-        if(!b)return;
-        const [bx,by,bw,bh]=b;
-        const vi=((c+~~(bx/5))^(r+~~(by/6)))%3;
-        ctx.fillStyle=['#281c36','#241832','#261a34'][vi];
-        ctx.fillRect(sx+bx,sy+by,bw,bh);
-        ctx.fillStyle='#362646';ctx.fillRect(sx+bx,sy+by,bw,1);  // topo
-        ctx.fillStyle='#18102c';ctx.fillRect(sx+bx+bw-1,sy+by+1,1,bh-1); // sombra dir
-      });
-      break;
-    }
-    case DOOR:
-      ctx.fillStyle='#361e0a';ctx.fillRect(sx,sy,T,T);
-      ctx.fillStyle='#4c2c10';ctx.fillRect(sx+1,sy+1,T-2,T-2);
-      ctx.fillStyle='#361e0a';
-      ctx.fillRect(sx+5,sy+1,1,T-2);ctx.fillRect(sx+10,sy+1,1,T-2);
-      ctx.fillStyle='#786048';
-      ctx.fillRect(sx+1,sy+5,T-2,1);ctx.fillRect(sx+1,sy+10,T-2,1);
-      ctx.fillStyle='#8a7040';ctx.fillRect(sx+7,sy+7,2,2);
-      break;
-    case T_C:{
-      // Piso
-      ctx.fillStyle='#1c1510';ctx.fillRect(sx,sy,T,T);
-      // Pernas da mesa
-      ctx.fillStyle='#20100a';ctx.fillRect(sx+1,sy+8,2,8);ctx.fillRect(sx+13,sy+8,2,8);
-      // Tampo da mesa com destaque
-      ctx.fillStyle='#3a2010';ctx.fillRect(sx,sy+7,T,2);
-      ctx.fillStyle='#4e2c16';ctx.fillRect(sx,sy+7,T,1);
-      // Pergaminho/carta sobre a mesa
-      ctx.fillStyle='#c8b870';ctx.fillRect(sx+1,sy+4,5,3);
-      ctx.fillStyle='#b0a060';ctx.fillRect(sx+1,sy+4,5,1);
-      ctx.fillStyle='#7a6838';ctx.fillRect(sx+2,sy+5,3,1);ctx.fillRect(sx+2,sy+6,4,1);
-      // Castiçal (saucer + coluna)
-      ctx.fillStyle='#b0a058';ctx.fillRect(sx+7,sy+5,4,2);
-      ctx.fillStyle='#c8b868';ctx.fillRect(sx+7,sy+5,4,1);
-      ctx.fillStyle='#c8b060';ctx.fillRect(sx+8,sy+2,2,4);
-      ctx.fillStyle='#e0c870';ctx.fillRect(sx+8,sy+2,1,4); // brilho
-      // Vela (corpo de cera)
-      ctx.fillStyle='#eee8b8';ctx.fillRect(sx+7,sy,5,3);
-      ctx.fillStyle='#fffad0';ctx.fillRect(sx+7,sy,3,1);  // topo
-      ctx.fillStyle='#d0c8a0';ctx.fillRect(sx+11,sy+1,1,2); // gotejamento
-      // Pavio
-      ctx.fillStyle='#302010';ctx.fillRect(sx+9,sy,1,1);
-      // Chama animada
-      const fl=Math.sin(n*.28),fl3=Math.cos(n*.19);
-      const fo=fl>.3?1:0,fo2=fl3>.25?1:0;
-      ctx.fillStyle='#ff6010';ctx.fillRect(sx+8,sy-3+fo,3,3);   // halo externo
-      ctx.fillStyle='#ffb820';ctx.fillRect(sx+8,sy-4+fo,3,3);   // chama
-      ctx.fillStyle='#fff060';ctx.fillRect(sx+9,sy-5+fo2,2,2);  // ponta
-      ctx.fillStyle='#fffbd0';ctx.fillRect(sx+9,sy-4,1,1);      // centro
-      break;
-    }
-    case T_M:{
-      ctx.fillStyle='#1c1510';ctx.fillRect(sx,sy,T,T);
-      // Moldura (ferro ornamentado)
-      ctx.fillStyle='#2a4058';ctx.fillRect(sx+1,sy,T-2,T);
-      ctx.fillStyle='#3a5878';
-      ctx.fillRect(sx+1,sy,T-2,1);ctx.fillRect(sx+1,sy+T-1,T-2,1); // h
-      ctx.fillRect(sx+1,sy,1,T);ctx.fillRect(sx+T-2,sy,1,T);        // v
-      // Ornamentos de canto
-      ctx.fillStyle='#5080a0';
-      [[sx+1,sy],[sx+T-3,sy],[sx+1,sy+T-2],[sx+T-3,sy+T-2]]
-        .forEach(([x,y])=>ctx.fillRect(x,y,2,2));
-      // Vidro
-      ctx.fillStyle='#4070a0';ctx.fillRect(sx+3,sy+2,T-6,T-4);
-      // Névoa animada (3 camadas)
-      const fa=Math.sin(n*.04),fb=Math.cos(n*.05+1);
-      ctx.fillStyle='rgba(10,40,90,0.65)';
-      ctx.fillRect(sx+3,sy+2+~~(fa*2.2),T-6,3);
-      ctx.fillStyle='rgba(20,60,110,0.5)';
-      ctx.fillRect(sx+4,sy+6+~~(fb*2),T-8,2);
-      ctx.fillStyle='rgba(8,35,80,0.55)';
-      ctx.fillRect(sx+3,sy+10+~~(fa*1.5)%3,T-6,2);
-      // Reflexo (destaque canto sup-esq)
-      ctx.fillStyle='rgba(160,210,255,0.45)';
-      ctx.fillRect(sx+3,sy+2,3,4);ctx.fillRect(sx+3,sy+2,T-6,1);
-      break;
-    }
-    case T_A:{
-      ctx.fillStyle='#1c1510';ctx.fillRect(sx,sy,T,T);
-      // Base em pedra
-      ctx.fillStyle='#1a0c1c';ctx.fillRect(sx,sy+10,T,6);
-      ctx.fillStyle='#22122a';ctx.fillRect(sx+1,sy+7,T-2,4);
-      ctx.fillStyle='#281628';ctx.fillRect(sx+2,sy+5,T-4,3);
-      // Arco gótico (topo do altar)
-      ctx.fillStyle='#1e1030';ctx.fillRect(sx+4,sy+2,T-8,4);
-      ctx.fillStyle='#281840';
-      ctx.fillRect(sx+4,sy+2,1,4);ctx.fillRect(sx+T-5,sy+2,1,4);
-      ctx.fillRect(sx+5,sy+2,T-10,1);
-      // Textura da pedra (juntas)
-      ctx.fillStyle='#120a1a';
-      ctx.fillRect(sx,sy+12,5,1);ctx.fillRect(sx+7,sy+12,5,1); // juntas base
-      ctx.fillRect(sx+2,sy+9,T-4,1);
-      // Velas laterais
-      ctx.fillStyle='#a89850';ctx.fillRect(sx+1,sy+4,2,5);ctx.fillRect(sx+T-3,sy+4,2,5);
-      ctx.fillStyle='#d0c878';ctx.fillRect(sx+1,sy+4,1,5);  // brilho esq
-      const cf=Math.sin(n*.25)>.3;
-      ctx.fillStyle='#ffb020';
-      ctx.fillRect(sx+1,sy+3+(cf?1:0),2,1);ctx.fillRect(sx+T-3,sy+3+(cf?1:0),2,1);
-      ctx.fillStyle='#ffff80';
-      ctx.fillRect(sx+1,sy+2+(cf?1:0),1,1);ctx.fillRect(sx+T-3,sy+2+(cf?1:0),1,1);
-      // Runa central (pulsante)
-      const ph=n*.09;
-      const rr=~~(125+Math.sin(ph)*55),rb=~~(145+Math.sin(ph+1.2)*65);
-      // Halo da runa
-      ctx.fillStyle=`rgba(${rr},0,${rb},0.25)`;ctx.fillRect(sx+4,sy+2,8,8);
-      // Runa (cruz ornamentada)
-      ctx.fillStyle=`rgb(${rr},0,${rb})`;
-      ctx.fillRect(sx+7,sy+3,2,5);ctx.fillRect(sx+5,sy+5,6,1);
-      ctx.fillRect(sx+6,sy+4,4,1);ctx.fillRect(sx+7,sy+2,2,1);
-      // Brilho da runa
-      ctx.fillStyle='rgba(255,200,255,0.5)';ctx.fillRect(sx+8,sy+4,1,1);
-      break;
-    }
-  }
-}
-
-// ── PERSONAGEM ────────────────────────────────────────────────────
-function rPlayer(){
-  const sx=~~(S.px-S.cx),sy=~~(S.py-S.cy);
-  const f=S.pf,n=S.frame;
-
-  // Sombra elíptica no chão
-  ctx.fillStyle='rgba(0,0,0,.28)';
-  ctx.fillRect(sx-5,sy+6,11,2);ctx.fillRect(sx-4,sy+7,9,1);
-
-  // ── ROBE INFERIOR (fluindo) ──
-  ctx.fillStyle='#1a1208';ctx.fillRect(sx-4,sy,9,7);
-  // Bainhas da robe (assimétricas na caminhada)
-  ctx.fillStyle='#130e06';
-  if(f===0){
-    ctx.fillRect(sx-4,sy+5,3,3);ctx.fillRect(sx+2,sy+5,3,3);
-    ctx.fillRect(sx-2,sy+7,5,1);
-  } else {
-    ctx.fillRect(sx-4,sy+4,3,4);ctx.fillRect(sx+2,sy+6,3,2);
-    ctx.fillRect(sx-3,sy+7,7,1);
-  }
-  // Dobra central da robe (realce)
-  ctx.fillStyle='#221a0c';ctx.fillRect(sx-1,sy,3,6);
-
-  // ── CORPO SUPERIOR E OMBROS ──
-  ctx.fillStyle='#1e1608';ctx.fillRect(sx-4,sy-5,9,6);
-  ctx.fillStyle='#281e0e';
-  ctx.fillRect(sx-5,sy-4,2,4); // ombro esq
-  ctx.fillRect(sx+4,sy-4,2,4); // ombro dir
-  // Broche/fecho no peito
-  ctx.fillStyle='#806030';ctx.fillRect(sx-1,sy-3,3,2);
-  ctx.fillStyle='#c0a048';ctx.fillRect(sx,sy-3,1,1);
-
-  // ── CAPUZ ──
-  ctx.fillStyle='#161008';
-  ctx.fillRect(sx-4,sy-12,9,4);  // capuz (topo)
-  ctx.fillRect(sx-5,sy-10,2,8);  // lateral esq pendente
-  ctx.fillRect(sx+4,sy-10,2,7);  // lateral dir pendente
-  ctx.fillStyle='#0e0c06';ctx.fillRect(sx-3,sy-9,7,2); // sombra interna
-
-  // ── ROSTO ──
-  ctx.fillStyle='#c09048';ctx.fillRect(sx-2,sy-11,5,5);
-  ctx.fillStyle='#a07838';ctx.fillRect(sx,sy-9,1,1); // sombra do nariz
-  // Olhos (por direção)
-  ctx.fillStyle='#e8e0a0';
-  if(S.face===0){
-    ctx.fillStyle='#604838'; // de costas: olhos ocultos
-    ctx.fillRect(sx-1,sy-9,1,1);ctx.fillRect(sx+2,sy-9,1,1);
-  } else if(S.face===3){
-    ctx.fillRect(sx-2,sy-9,1,1);
-    ctx.fillStyle='rgba(232,224,160,0.25)';ctx.fillRect(sx+1,sy-9,1,1);
-  } else if(S.face===1){
-    ctx.fillRect(sx+3,sy-9,1,1);
-    ctx.fillStyle='rgba(232,224,160,0.25)';ctx.fillRect(sx,sy-9,1,1);
-  } else {
-    ctx.fillStyle='#e8e0a0';
-    ctx.fillRect(sx-1,sy-9,1,1);ctx.fillRect(sx+2,sy-9,1,1);
-  }
-
-  // ── BOTAS ──
-  ctx.fillStyle='#141008';
-  if(f===0){
-    ctx.fillRect(sx-3,sy+6,3,2);ctx.fillRect(sx+1,sy+6,3,2);
-    // Bicos das botas
-    ctx.fillStyle='#1c140c';
-    ctx.fillRect(sx-1,sy+7,2,1);ctx.fillRect(sx+2,sy+7,2,1);
-  } else {
-    ctx.fillRect(sx-3,sy+5,3,3);ctx.fillRect(sx+1,sy+7,3,1);
-    ctx.fillStyle='#1c140c';ctx.fillRect(sx-1,sy+7,2,1);
-  }
-
-  // ── BRAÇO E TOCHA ──
-  ctx.fillStyle='#281808';ctx.fillRect(sx+4,sy-5,2,6); // braço
-  // Cabo da tocha
-  ctx.fillStyle='#6a4818';ctx.fillRect(sx+5,sy-8,2,8);
-  // Aros de ferro
-  ctx.fillStyle='#806028';
-  ctx.fillRect(sx+5,sy-5,2,1);ctx.fillRect(sx+5,sy-2,2,1);
-  // Cápsula da tocha
-  ctx.fillStyle='#c08820';ctx.fillRect(sx+4,sy-10,4,3);
-  ctx.fillStyle='#e0a030';ctx.fillRect(sx+4,sy-10,4,1);
-  // Chama (animada, mais volumosa)
-  const fl2=Math.sin(n*.22),fl3=Math.cos(n*.17);
-  const fo=fl2>.3?1:0,fo2=fl3>.25?1:0;
-  ctx.fillStyle='#ff5808';ctx.fillRect(sx+4,sy-14+fo,4,4);   // halo laranja
-  ctx.fillStyle='#ffb018';ctx.fillRect(sx+5,sy-15+fo,3,4);   // chama principal
-  ctx.fillStyle='#fff050';ctx.fillRect(sx+5,sy-16+fo2,2,3);  // ponta quente
-  ctx.fillStyle='#fffcd0';ctx.fillRect(sx+6,sy-15,1,1);      // núcleo branco
-}
-
-// ── ILUMINACAO ────────────────────────────────────────────────────
-function rLight(){
-  lx.setTransform(2,0,0,2,0,0);
-  lx.clearRect(0,0,W,H);
-  lx.fillStyle='rgba(0,0,0,.89)';lx.fillRect(0,0,W,H);
-  lx.globalCompositeOperation='destination-out';
-  const px=~~(S.px-S.cx),py=~~(S.py-S.cy);
-  const g=lx.createRadialGradient(px,py-4,2,px,py-4,64);
-  g.addColorStop(0,'rgba(255,200,100,1)');g.addColorStop(.38,'rgba(225,140,50,.62)');
-  g.addColorStop(.75,'rgba(150,68,18,.2)');g.addColorStop(1,'rgba(0,0,0,0)');
-  lx.fillStyle=g;lx.beginPath();lx.arc(px,py-4,64,0,Math.PI*2);lx.fill();
-  addGlow(POS_C,22);
-  if(S.progress>=1)addGlow(POS_M,16);
-  if(S.progress>=2)addGlow(POS_A,18);
-  lx.globalCompositeOperation='source-over';
-  ctx.drawImage(lc,0,0,W,H);
-}
-function addGlow([row,col],rad){
-  const ox=col*T+8-S.cx,oy=row*T+8-S.cy;
-  if(ox<-40||ox>W+40||oy<-40||oy>H+40)return;
-  const fl=.92+Math.sin(S.frame*.18)*.08,r=rad*fl;
-  const g=lx.createRadialGradient(ox,oy,0,ox,oy,r);
-  g.addColorStop(0,'rgba(255,240,160,.75)');g.addColorStop(1,'rgba(0,0,0,0)');
-  lx.fillStyle=g;lx.beginPath();lx.arc(ox,oy,r,0,Math.PI*2);lx.fill();
-}
-
-// ── DICA DE INTERACAO ─────────────────────────────────────────────
-function rHint(){
-  if(!nearObj()||S.frame%30>=20)return;
-  const px=~~(S.px-S.cx),py=~~(S.py-S.cy);
-  ctx.textAlign='center';ctx.fillStyle='#d0b830';
-  ctx.font='4px "Press Start 2P"';ctx.fillText('[E]',px,py-14);
-  ctx.textAlign='left';
-}
-
-// ── ROTULO DE SETOR ───────────────────────────────────────────────
-function rSectorLabel(){
-  if(S.sectorLabelT<=0)return;
-  const t=S.sectorLabelT;
-  const a=Math.min(1,t*3)*Math.min(1,t);
-  ctx.save();ctx.globalAlpha=a;
-  ctx.fillStyle='rgba(4,3,16,.82)';ctx.fillRect(W/2-96,13,192,14);
-  ctx.strokeStyle='rgba(160,120,40,.5)';ctx.lineWidth=1;
-  ctx.strokeRect(W/2-96,13,192,14);
-  // Texto muito mais claro que a versao anterior
-  ctx.fillStyle='#f0e068';
-  ctx.font='4px "Press Start 2P"';ctx.textAlign='center';
-  ctx.fillText(S.sectorLabel,W/2,22);
-  ctx.textAlign='left';ctx.restore();
-}
-
-// ── OVERLAY RESPOSTA CORRETA ──────────────────────────────────────
-function rOkMsg(){
-  const a=Math.min(1,S.okT*2.5);
-  ctx.save();ctx.globalAlpha=a;
-  const bW=200,bH=S.okMsg.length*12+18;
-  const bx=W/2-bW/2,by=H/2-bH/2;
-  ctx.fillStyle='rgba(3,3,16,.96)';ctx.fillRect(bx,by,bW,bH);
-  ctx.strokeStyle='#786020';ctx.lineWidth=1;ctx.strokeRect(bx,by,bW,bH);
-  ctx.fillStyle='#d8b838';ctx.font='4px "Press Start 2P"';ctx.textAlign='center';
-  S.okMsg.forEach((l,i)=>ctx.fillText(l,W/2,by+13+i*11));
-  ctx.textAlign='left';ctx.restore();
-}
-
-// ── DIALOGO (3 fases) ─────────────────────────────────────────────
-function rDlg(){
-  const d=DLGS[S.dKey];
-  const bH=90,bY=H-bH-2,pX=7,lH=9;
-
-  ctx.fillStyle='rgba(3,3,14,.97)';ctx.fillRect(2,bY,W-4,bH);
-  ctx.strokeStyle='#7a6018';ctx.lineWidth=1;ctx.strokeRect(2,bY,W-4,bH);
-  ctx.strokeStyle='#2e2010';ctx.strokeRect(3,bY+1,W-6,bH-2);
-  ctx.fillStyle='#c07818';
-  [[2,bY],[W-5,bY],[2,bY+bH-3],[W-5,bY+bH-3]].forEach(([x,y])=>ctx.fillRect(x,y,3,3));
-
-  // Cabecalho: "Carta I / II / III"
-  const cartaIdx={candle:0,mirror:1,altar:2}[S.dKey];
-  ctx.fillStyle='#a07830';ctx.font='3px "Press Start 2P"';
-  ctx.textAlign='right';
-  ctx.fillText(['Carta I','Carta II','Carta III'][cartaIdx],W-8,bY+7);
-  ctx.textAlign='left';
-  ctx.fillStyle='#2a1a08';ctx.fillRect(2,bY+9,W-4,1);
-
-  ctx.font='4px "Press Start 2P"';
-
-  if(S.dPhase==='typing'||S.dPhase==='waiting'){
-    ctx.fillStyle='#d0c888';
-    let rem=S.dPhase==='waiting'?999999:S.dIdx,ly=bY+pX+8;
-    for(const line of d.narrative){
-      if(rem<=0)break;
-      if(line===''){rem-=1;ly+=5;continue;}
-      ctx.fillText(line.substring(0,Math.min(rem,line.length)),pX+2,ly);
-      rem-=line.length;ly+=lH;
-      if(ly>bY+bH-16)break;
-    }
-    // Dica na base
-    if(S.dPhase==='waiting'){
-      // Texto completado — pede ENTER
-      if(S.frame%28<16){
-        ctx.fillStyle='#e8c840';ctx.font='4px "Press Start 2P"';
-        ctx.textAlign='center';
-        ctx.fillText('[ ENTER para responder ]',W/2,bY+bH-6);
-        ctx.textAlign='left';
-      }
-    } else {
-      ctx.fillStyle='#4a3818';ctx.font='3px "Press Start 2P"';
-      ctx.textAlign='right';ctx.fillText('[ESPACO p/ pular]',W-7,bY+bH-6);ctx.textAlign='left';
-    }
-  }
-  else{ // choosing
-    // Pergunta (cor bem visivel)
-    ctx.fillStyle='#f0e060';ctx.font='4px "Press Start 2P"';
-    ctx.fillText(d.question,pX+2,bY+pX+8);
-    ctx.fillStyle='#2c1e0c';ctx.fillRect(pX,bY+pX+11,W-pX*2-4,1);
-    // Opcoes
-    d.opts.forEach((opt,i)=>{
-      const ly=bY+pX+20+i*19;
-      const sel=i===S.dSel;
-      if(sel){ctx.fillStyle='#28220e';ctx.fillRect(3,ly-7,W-6,15);}
-      ctx.fillStyle=sel?'#ffd050':'#a08040';
-      if(sel)ctx.fillText('>',pX+1,ly);
-      ctx.fillText(opt,pX+8,ly);
-    });
-    ctx.fillStyle='#3c2e14';ctx.font='3px "Press Start 2P"';
+    ctx.fillStyle=isSel?'#f0d878':'#9a8860';
+    ctx.font='4px "Press Start 2P"';ctx.textAlign='left';
+    const cursor=isSel?'▶ ':'  ';
+    ctx.fillText(cursor+c.n+'. '+c.title,32,y);
     ctx.textAlign='right';
-    ctx.fillText('[1 / 2 / 3  ou  setas + ENTER]',W-7,bY+bH-6);
+    if(done){ctx.fillStyle='#70b060';ctx.fillText('✓',W-32,y);}
     ctx.textAlign='left';
-  }
-}
+    ctx.fillStyle=isSel?'#7a6840':'#4a4030';ctx.font='3px "Press Start 2P"';
+    ctx.fillText('   '+c.trad,32,y+7);
+    ctx.textAlign='center';
+  });
 
-// ── GAME OVER ─────────────────────────────────────────────────────
-function rGameover(){
-  ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);
-  const vg=ctx.createRadialGradient(W/2,H/2,15,W/2,H/2,W*.75);
-  vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,'rgba(60,0,0,.7)');
-  ctx.fillStyle=vg;ctx.fillRect(0,0,W,H);
-  ctx.textAlign='center';
-  ctx.fillStyle='#880e08';ctx.font='7px "Press Start 2P"';
-  ctx.fillText('VOCÊ PERDEU!',W/2,32);
-  ctx.fillStyle='#2e1c10';
-  for(let i=0;i<28;i++)ctx.fillRect(W/2-68+i*5,40,3,1);
-  ctx.fillStyle='#c09860';ctx.font='4px "Press Start 2P"';
-  S.goMsg.forEach((l,i)=>ctx.fillText(l,W/2,54+i*12));
-  if(S.mf<.92){
-    ctx.fillStyle='#e8c870';ctx.font='5px "Press Start 2P"';
-    ctx.fillText('ENTER: tentar novamente',W/2,148);
+  // Filósofo(s) do capítulo selecionado
+  ctx.fillStyle='#4a4030';ctx.font='3px "Press Start 2P"';
+  ctx.fillText(CHAPTERS[S.sel].sub,W/2,140);
+
+  ctx.fillStyle='#3a3424';
+  for(let i=0;i<30;i++)ctx.fillRect(W/2-72+i*5,148,2,1);
+
+  if(S.frame%30<20){
+    ctx.fillStyle='#e8d070';ctx.font='4px "Press Start 2P"';
+    ctx.fillText('PRESSIONE ENTER',W/2,162);
   }
+  ctx.fillStyle='#5a5040';ctx.font='3px "Press Start 2P"';
+  ctx.fillText('Tese → Antítese → Síntese',W/2,172);
+
   ctx.textAlign='left';
 }
 
-// ── EPIFANIA ──────────────────────────────────────────────────────
-function rEpiphany(){
-  const t=S.epT;
-  const p=Math.min(1,t/1.4);
-  ctx.fillStyle=`rgb(${~~(p*245)},${~~(p*205)},${~~(p*72)})`;
-  ctx.fillRect(0,0,W,H);
-  if(t>1){
-    ctx.fillStyle='rgba(4,3,12,.88)';ctx.fillRect(0,0,W,H);
-    const ga=ctx.createRadialGradient(W/2,H/2,0,W/2,H/2,W*.85);
-    ga.addColorStop(0,'rgba(230,195,55,.28)');ga.addColorStop(1,'rgba(0,0,0,0)');
-    ctx.fillStyle=ga;ctx.fillRect(0,0,W,H);
-    const ta=Math.min(1,(t-1)/.9);
-    ctx.globalAlpha=ta;ctx.textAlign='center';
-    // Titulo principal
-    ctx.fillStyle='#f8f0c0';ctx.font='10px "Press Start 2P"';
-    ctx.fillText('COGITO',W/2,H/2-26);ctx.fillText('ERGO SUM',W/2,H/2-12);
-    // Latim original
-    ctx.fillStyle='#706020';ctx.font='3px "Press Start 2P"';
-    ctx.fillText('[ Ego sum, ego existo — Meditatio II ]',W/2,H/2+2);
-    // Texto do jogo original
-    ctx.fillStyle='#d8bc78';ctx.font='4px "Press Start 2P"';
-    ctx.fillText('Engane-me o quanto quiser,',W/2,H/2+14);
-    ctx.fillText('Gênio Maligno. Para ser enganado,',W/2,H/2+24);
-    ctx.fillText('eu preciso pensar. E se penso,',W/2,H/2+34);
-    ctx.fillText('eu existo. Essa é a certeza!',W/2,H/2+44);
-    if(t>2.8){
-      ctx.globalAlpha=ta*Math.min(1,(t-2.8)*.9);
-      ctx.fillStyle='#f0e060';ctx.font='6px "Press Start 2P"';
-      ctx.fillText('PARABÉNS!',W/2,H/2+60);
-      ctx.fillStyle='#a08848';ctx.font='4px "Press Start 2P"';
-      ctx.fillText('VOCÊ ESCAPOU DO LABIRINTO!',W/2,H/2+70);
-    }
-    if(t>4.5){
-      ctx.globalAlpha=ta*Math.min(1,(t-4.5)*.6);
-      ctx.fillStyle='#504020';ctx.font='3px "Press Start 2P"';
-      ctx.fillText('Sum res cogitans.  •  René Descartes  •  MDCXLI',W/2,H/2+88);
-    }
-    ctx.globalAlpha=1;ctx.textAlign='left';
-  }
-}
-
-// ── LOOP ──────────────────────────────────────────────────────────
 function loop(ts){
-  const dt=Math.min((ts-(S.lastT||ts))/1000,.05);
-  S.lastT=ts;update(dt);render();
+  S.frame++;
+  render();
   requestAnimationFrame(loop);
 }
 document.fonts.ready.then(()=>requestAnimationFrame(loop));
