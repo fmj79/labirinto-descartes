@@ -271,7 +271,6 @@ function initAudio(){
     AC=new(window.AudioContext||window.webkitAudioContext)();
     if(AC.state==='suspended')AC.resume();
     setupReverb();
-    setTimeout(startAmbient,900);
     if(!_midiNotes){_midiNotes=parseMidi(MIDI_B64);_midiDur=_midiNotes.reduce((mx,[t,,d])=>Math.max(mx,t+d),0);}
     setTimeout(startMidi,600);
   }catch(e){AC=null;}
